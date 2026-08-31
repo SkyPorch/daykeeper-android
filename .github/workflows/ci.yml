@@ -1,0 +1,32 @@
+name: Android SDK
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install compile platform
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Verify contract snapshot
+        run: echo 'b62dd386a87380f3fe94f968ff8fedf703ca6079199ea74057d32e31f91e1fec  openapi/customer.yaml' | sha256sum --check
+      - name: Tests, lint, R8 example, instrumentation compilation and local packaging
+        run: ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint :example:assembleRelease :example:assembleDebugAndroidTest publishAllPublicationsToVerificationRepository --no-daemon --console=plain
+      - name: Independent Maven consumer
+        run: ./gradlew -p verification/consumer -PdaykeeperRepository="$GITHUB_WORKSPACE/build/repository" testDebugUnitTest assembleRelease --no-daemon --console=plain
+      # No automatic device selection, Maven Central publication or production access.
