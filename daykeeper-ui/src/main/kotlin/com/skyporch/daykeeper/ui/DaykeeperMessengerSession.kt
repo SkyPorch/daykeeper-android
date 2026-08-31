@@ -28,6 +28,8 @@ data class DaykeeperMessengerState(
     val errorCode: String? = null,
     val uncertainMessage: Boolean = false,
     val uncertainCreation: Boolean = false,
+    /** A fresh post-failure read completed; the user must still explicitly review and confirm. */
+    val recoveryReady: Boolean = false,
 )
 
 /**
@@ -42,8 +44,10 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     val state: StateFlow<DaykeeperMessengerState> = mutableState.asStateFlow()
     private val drafts = mutableMapOf<Long, String>()
     private val uncertain = mutableSetOf<Long>()
+    private val reviewedUncertain = mutableSetOf<Long>()
     private var selected: Long? = null
     private var creationUncertain = false
+    private var creationReviewed = false
     private var revision = 0L
     private var job: Job? = null
     private var write: String? = null
@@ -59,6 +63,8 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         main()
         if (state.value.suspended) return
         cancelOperation()
+        reviewedUncertain.clear()
+        creationReviewed = false
         mutableState.value = DaykeeperMessengerState(suspended = true)
     }
 
@@ -70,8 +76,10 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         client = null
         drafts.clear()
         uncertain.clear()
+        reviewedUncertain.clear()
         selected = null
         creationUncertain = false
+        creationReviewed = false
         write = null
         mutableState.value = DaykeeperMessengerState(signedOut = true)
     }
@@ -101,10 +109,14 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     }
 
     fun refresh() = operate {
+        selected?.let { id -> reviewedUncertain.remove(id) }
+        creationReviewed = false
         val summaries = it.listConversations().conversations
         currentCoroutineContext().ensureActive()
         val messages = selected?.let { id -> it.listMessages(id).messages } ?: emptyList()
         currentCoroutineContext().ensureActive()
+        selected?.takeIf { id -> id in uncertain }?.let { id -> reviewedUncertain.add(id) }
+        if (selected == null && creationUncertain) creationReviewed = true
         snapshot(summaries, messages)
     }
 
@@ -157,17 +169,19 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     fun discardUncertainDraft() {
         main()
         val id = selected ?: return
-        if (!usable() || state.value.busy || id !in uncertain) return
+        if (!usable() || state.value.busy || id !in uncertain || id !in reviewedUncertain) return
         drafts.remove(id)
         uncertain.remove(id)
+        reviewedUncertain.remove(id)
         mutableState.value = snapshot(state.value.conversations, state.value.messages)
     }
 
     /** Explicit acknowledgement after reviewing the list. Does not create or repeat a request. */
     fun acknowledgeUncertainCreation() {
         main()
-        if (!usable() || state.value.busy || selected != null) return
+        if (!usable() || state.value.busy || selected != null || !creationReviewed) return
         creationUncertain = false
+        creationReviewed = false
         mutableState.value = snapshot(state.value.conversations)
     }
 
@@ -213,8 +227,15 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     }
 
     private fun markUncertain() {
-        if (write == "create") creationUncertain = true
-        if (write == "send") selected?.let { uncertain.add(it) }
+        if (write == "create") {
+            creationUncertain = true
+            creationReviewed = false
+        }
+        if (write == "send")
+            selected?.let {
+                uncertain.add(it)
+                reviewedUncertain.remove(it)
+            }
     }
 
     private fun snapshot(
@@ -229,6 +250,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             suspended = false,
             uncertainMessage = selected in uncertain,
             uncertainCreation = creationUncertain,
+            recoveryReady = selected?.let { it in reviewedUncertain } ?: creationReviewed,
         )
 
     private fun usable() = client != null && !state.value.suspended

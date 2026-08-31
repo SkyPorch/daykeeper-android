@@ -219,6 +219,7 @@ constructor(
             it.isEnabled = active && !state.busy
         }
         logout.isEnabled = active
+        recover.isEnabled = active && !state.busy && state.recoveryReady
         create.isEnabled = active && !state.busy && !state.uncertainCreation
         composer.isEnabled = thread && !state.busy && !state.uncertainMessage
         send.isEnabled = composer.isEnabled && state.draft.isNotBlank()

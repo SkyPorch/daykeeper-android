@@ -9,16 +9,19 @@ or customer erasure endpoint is exposed. Models are handwritten and validate IDs
 conversation binding, counts and basic timestamp shapes; they are not a general
 JSON Schema validator. Unknown response fields are ignored.
 
-Build baseline: Android 36, JDK 17, Gradle 8.13, AGP 8.13.0, Kotlin 2.2.0,
+Build baseline: Android 37.0, JDK 17, Gradle 9.4.1, AGP 9.2.1, built-in Kotlin 2.2.10,
 coroutines 1.10.2 and serialization 1.9.0. Runtime minimum is declared API 23;
 declaring a minimum is not device certification.
 
-OkHttp is pinned to 5.4.0 for the Android 36 consumer baseline. Its published AAR
-requires compile SDK 36. Version 5.5.0 requires 37 and was rejected by the normal
-AAR metadata check; the check has not been disabled or overridden. Before release,
-evaluate the Android 37/AGP upgrade and the newer TLS/timeout fixes recorded in the
-[official changelog](https://lysine.dev/okhttp/changelogs/changelog/). Do not describe
-this pin as the newest available release or as a completed dependency audit.
+OkHttp is pinned to 5.5.0, including the TLS/timeout changes in its
+[official changelog](https://lysine.dev/okhttp/changelogs/changelog/). Its AAR
+requires consumer compile SDK 37; this does not raise the declared runtime minimum
+or silently change a host app's target SDK. The example targets 37. The build uses
+the [supported AGP 9.2 toolchain](https://developer.android.com/build/releases/agp-9-2-0-release-notes)
+and [built-in Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin),
+with no AAR metadata override or unsupported-compile suppression. Other build
+toolchain combinations and all native runtime claims still need verification.
+Dependency currency is not a completed security audit.
 
 ## Verification levels
 
@@ -34,6 +37,8 @@ this pin as the newest available release or as a completed dependency audit.
   authorized device/CI run is recorded, their compilation is the only claim.
 - Local Maven verification publishes AARs, sources, POMs and Gradle metadata into
   the repository's build directory. It is not a Maven Central publication.
+  The separate consumer refreshes snapshot resolution and checks that both
+  resolved AAR hashes equal the freshly built artifacts before accepting results.
 
 ## Required before production release
 

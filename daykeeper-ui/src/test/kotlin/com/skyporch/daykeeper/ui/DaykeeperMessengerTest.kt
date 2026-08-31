@@ -1,4 +1,5 @@
 @file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@file:Suppress("DEPRECATION")
 
 package com.skyporch.daykeeper.ui
 
@@ -15,6 +16,7 @@ import com.skyporch.daykeeper.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -22,6 +24,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -315,6 +319,194 @@ class DaykeeperMessengerTest {
             activity.finish()
         }
 
+    @Test
+    fun finalAuthenticationDenialsClearCustomerDataAndPreventFurtherWrites() =
+        runTest(dispatcher) {
+            for (status in listOf(401, 403)) {
+                val client = FakeClient()
+                val session = DaykeeperMessengerSession(client)
+                session.resume()
+                advanceUntilIdle()
+                session.createConversation()
+                advanceUntilIdle()
+                session.setDraft("private customer draft")
+                client.listFailure = responseError(status)
+                session.refresh()
+                advanceUntilIdle()
+                assertTrue(session.state.value.signedOut)
+                assertEquals("", session.state.value.draft)
+                assertTrue(session.state.value.conversations.isEmpty())
+                assertTrue(session.state.value.messages.isEmpty())
+                session.createConversation()
+                session.sendMessage()
+                session.resume()
+                advanceUntilIdle()
+                assertEquals(1, client.creates)
+                assertEquals(0, client.sends)
+            }
+        }
+
+    @Test
+    fun quotaRejectionPreservesDraftAndRequiresAnExplicitNextSend() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("keep my message")
+            client.sendFailure = responseError(429, "daykeeper_usage_limit_exceeded")
+            session.sendMessage()
+            advanceUntilIdle()
+            assertEquals("keep my message", session.state.value.draft)
+            assertEquals("daykeeper_usage_limit_exceeded", session.state.value.errorCode)
+            assertFalse(session.state.value.uncertainMessage)
+            assertEquals(1, client.sends)
+            client.sendFailure = null
+            session.refresh()
+            advanceUntilIdle()
+            assertEquals(1, client.sends)
+            session.sendMessage()
+            advanceUntilIdle()
+            assertEquals(2, client.sends)
+            assertEquals(1, session.state.value.messages.size)
+            session.reset()
+        }
+
+    @Test
+    fun uncertainMessageCannotBeDiscardedUntilFreshHistorySucceeds() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("unconfirmed")
+            client.sendFailure = responseError(500)
+            session.sendMessage()
+            advanceUntilIdle()
+            assertTrue(session.state.value.uncertainMessage)
+            assertFalse(session.state.value.recoveryReady)
+            session.discardUncertainDraft()
+            assertEquals("unconfirmed", session.state.value.draft)
+            client.listFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            session.discardUncertainDraft()
+            assertTrue(session.state.value.uncertainMessage)
+            assertFalse(session.state.value.recoveryReady)
+            client.listFailure = null
+            session.refresh()
+            advanceUntilIdle()
+            assertTrue(session.state.value.recoveryReady)
+            client.listFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            assertFalse(session.state.value.recoveryReady)
+            client.listFailure = null
+            session.refresh()
+            advanceUntilIdle()
+            session.discardUncertainDraft()
+            assertFalse(session.state.value.uncertainMessage)
+            assertEquals("", session.state.value.draft)
+            assertEquals(1, client.sends)
+            session.reset()
+        }
+
+    @Test
+    fun uncertainCreationCannotBeAcknowledgedUntilFreshListSucceeds() =
+        runTest(dispatcher) {
+            val client = FakeClient().apply { createFailure = responseError(503) }
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.acknowledgeUncertainCreation()
+            assertTrue(session.state.value.uncertainCreation)
+            assertFalse(session.state.value.recoveryReady)
+            session.createConversation()
+            advanceUntilIdle()
+            assertEquals(1, client.creates)
+            client.listFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            session.acknowledgeUncertainCreation()
+            assertTrue(session.state.value.uncertainCreation)
+            client.listFailure = null
+            session.refresh()
+            advanceUntilIdle()
+            assertTrue(session.state.value.recoveryReady)
+            session.acknowledgeUncertainCreation()
+            assertFalse(session.state.value.uncertainCreation)
+            assertEquals(1, client.creates)
+            client.createFailure = null
+            session.createConversation()
+            advanceUntilIdle()
+            assertEquals(2, client.creates)
+            session.reset()
+        }
+
+    @Test
+    fun nativeRecoveryControlIsDisabledUntilSuccessfulRefresh() =
+        runTest(dispatcher) {
+            val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+            val owner = TestOwner()
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            val view = DaykeeperMessengerView(activity)
+            activity.setContentView(view)
+            view.bind(session, owner)
+            owner.lifecycle.currentState = Lifecycle.State.STARTED
+            advanceUntilIdle()
+            button(view, "New conversation").performClick()
+            advanceUntilIdle()
+            val composer = descendants(view).filterIsInstance<EditText>().single()
+            composer.setText("unconfirmed")
+            advanceUntilIdle()
+            client.sendFailure = responseError(500)
+            button(view, "Send message").performClick()
+            advanceUntilIdle()
+            assertFalse(button(view, "Discard uncertain draft").isEnabled)
+            assertEquals("unconfirmed", composer.text.toString())
+            button(view, "Refresh").performClick()
+            advanceUntilIdle()
+            assertTrue(button(view, "Discard uncertain draft").isEnabled)
+            button(view, "Discard uncertain draft").performClick()
+            advanceUntilIdle()
+            assertEquals("", composer.text.toString())
+            assertEquals(1, client.sends)
+            owner.lifecycle.currentState = Lifecycle.State.DESTROYED
+            session.reset()
+            activity.finish()
+        }
+
+    // Obtain the SDK's real sanitized error through its public API; no internal-constructor bypass.
+    private fun responseError(status: Int, code: String = "support_upstream_unavailable") =
+        runBlocking {
+            MockWebServer().use { server ->
+                server.start()
+                server.enqueue(
+                    MockResponse().setResponseCode(status).setBody("{\"error\":\"$code\"}")
+                )
+                val client =
+                    DaykeeperClient(
+                        server.url("/").toString(),
+                        DaykeeperTokenProvider { "synthetic" },
+                        1_000,
+                    )
+                try {
+                    client.createConversation()
+                    error("Expected fixture failure")
+                } catch (error: DaykeeperException) {
+                    assertEquals(status, error.status)
+                    error
+                }
+            }
+        }
+
     private fun descendants(view: View): List<View> =
         listOf(view) +
             if (view is ViewGroup)
@@ -336,6 +528,9 @@ class DaykeeperMessengerTest {
         var unreadAfterSeen = 0
         var sendCompletion: CompletableDeferred<Unit>? = null
         var createCompletion: CompletableDeferred<Unit>? = null
+        var createFailure: DaykeeperException? = null
+        var sendFailure: DaykeeperException? = null
+        var listFailure: DaykeeperException? = null
         val threads = mutableListOf<DaykeeperConversation>()
         val messages = mutableListOf<DaykeeperMessage>()
 
@@ -350,11 +545,17 @@ class DaykeeperMessengerTest {
                 "Demo",
             )
 
-        override suspend fun listConversations() =
-            DaykeeperConversationList(threads.map { it.copy(unreadForContact = unread) }, null)
+        override suspend fun listConversations(): DaykeeperConversationList {
+            listFailure?.let { throw it }
+            return DaykeeperConversationList(
+                threads.map { it.copy(unreadForContact = unread) },
+                null,
+            )
+        }
 
         override suspend fun createConversation(): DaykeeperConversationResult {
             creates++
+            createFailure?.let { throw it }
             val item =
                 DaykeeperConversation(threads.size + 1L, "open", null, null, 0, unread, null, "")
             threads.add(item)
@@ -378,6 +579,7 @@ class DaykeeperMessengerTest {
             content: String,
         ): DaykeeperMessageResult {
             sends++
+            sendFailure?.let { throw it }
             val item =
                 DaykeeperMessage(
                     messages.size + 1L,

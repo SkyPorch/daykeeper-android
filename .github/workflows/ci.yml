@@ -22,11 +22,16 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install compile platform
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Verify contract snapshot
         run: echo 'b62dd386a87380f3fe94f968ff8fedf703ca6079199ea74057d32e31f91e1fec  openapi/customer.yaml' | sha256sum --check
       - name: Tests, lint, R8 example, instrumentation compilation and local packaging
         run: ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint :example:assembleRelease :example:assembleDebugAndroidTest publishAllPublicationsToVerificationRepository --no-daemon --console=plain
       - name: Independent Maven consumer
-        run: ./gradlew -p verification/consumer -PdaykeeperRepository="$GITHUB_WORKSPACE/build/repository" testDebugUnitTest assembleRelease --no-daemon --console=plain
+        run: |
+          daykeeper_core_sha=$(sha256sum daykeeper/build/outputs/aar/daykeeper-release.aar | cut -d' ' -f1)
+          daykeeper_ui_sha=$(sha256sum daykeeper-ui/build/outputs/aar/daykeeper-ui-release.aar | cut -d' ' -f1)
+          ./gradlew -p verification/consumer -PdaykeeperRepository="$GITHUB_WORKSPACE/build/repository" \
+            -PdaykeeperExpectedCoreSha256="$daykeeper_core_sha" -PdaykeeperExpectedUiSha256="$daykeeper_ui_sha" \
+            verifyDaykeeperArtifacts testDebugUnitTest assembleRelease --refresh-dependencies --no-daemon --console=plain
       # No automatic device selection, Maven Central publication or production access.

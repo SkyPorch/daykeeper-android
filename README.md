@@ -16,8 +16,9 @@ only publishes snapshots to an isolated local verification repository; it has no
 remote publishing credentials or release automation. Install an exact approved
 version after release, never `latest.release` or a dynamic range.
 
-Android API 23 is the declared minimum. Build verification uses Android 36,
-JDK 17, Gradle 8.13 and Kotlin 2.2.0. See [compatibility](COMPATIBILITY.md) for what
+Android API 23 is the declared minimum; consumers must compile against API 37.
+Build verification uses JDK 17, AGP 9.2.1, Gradle 9.4.1 and built-in Kotlin 2.2.10.
+See [compatibility](COMPATIBILITY.md) for what
 has actually been tested, dependency choices and remaining device gates.
 
 ## Customer client
@@ -76,8 +77,10 @@ touch targets, and scale-independent text. It inherits the host theme.
 
 New conversations, sends, refreshes and read markers are explicit actions. After
 an uncertain send, the messenger preserves but disables the draft. Refresh and
-review history, then explicitly discard it. After uncertain creation, review the
-list and acknowledge it. Neither recovery action repeats the write. A confirmed
+review history, then explicitly discard it. The discard and acknowledgement
+controls stay disabled until a fresh read succeeds; failed reads and backgrounding
+invalidate that readiness. After uncertain creation, review the refreshed list
+and acknowledge it. Neither recovery action repeats the write. A confirmed
 read-marker write refreshes server summaries so new unread arrivals are retained.
 
 ## Security and privacy
@@ -110,10 +113,13 @@ not implemented. See [release gates](COMPATIBILITY.md).
   :example:assembleRelease :example:assembleDebugAndroidTest \
   publishAllPublicationsToVerificationRepository
 ./gradlew -p verification/consumer \
-  -PdaykeeperRepository="$PWD/build/repository" testDebugUnitTest assembleRelease
+  -PdaykeeperRepository="$PWD/build/repository" testDebugUnitTest assembleRelease --refresh-dependencies
 ```
 
-Set `ANDROID_HOME` to your installed Android SDK. Import this repository in
+Set `ANDROID_HOME` to an SDK with `platforms;android-37.0` and Build Tools 36.0.0.
+The CI consumer step also passes both freshly built AAR hashes to
+`verifyDaykeeperArtifacts`, so a stale snapshot cannot count as verification.
+Import this repository in
 Android Studio to run `example`: it is clearly labeled offline synthetic data,
 uses no production credentials and sends no network requests. On an explicitly
 authorized, isolated test device, run `:example:connectedDebugAndroidTest`.
