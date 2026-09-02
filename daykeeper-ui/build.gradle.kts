@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.skyporch.daykeeper.ui"
-    compileSdk = 37
+    compileSdk = 36
     defaultConfig { minSdk = 23 }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -28,7 +28,7 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
 }
 
 afterEvaluate {

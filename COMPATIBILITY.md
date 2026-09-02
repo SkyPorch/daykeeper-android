@@ -9,18 +9,22 @@ or customer erasure endpoint is exposed. Models are handwritten and validate IDs
 conversation binding, counts and basic timestamp shapes; they are not a general
 JSON Schema validator. Unknown response fields are ignored.
 
-Build baseline: Android 37.0, JDK 17, Gradle 9.4.1, AGP 9.2.1, built-in Kotlin 2.2.10,
+Build baseline: Android 36, JDK 17, Gradle 9.4.1, AGP 9.2.1, built-in Kotlin 2.2.10,
 coroutines 1.10.2 and serialization 1.9.0. Runtime minimum is declared API 23;
 declaring a minimum is not device certification.
 
-OkHttp is pinned to 5.5.0, including the TLS/timeout changes in its
-[official changelog](https://lysine.dev/okhttp/changelogs/changelog/). Its AAR
-requires consumer compile SDK 37; this does not raise the declared runtime minimum
-or silently change a host app's target SDK. The example targets 37. The build uses
+OkHttp is pinned to 5.4.0, whose Android artifact supports consumer compile SDK 36.
+OkHttp 5.5.0 raises its AAR minimum to API 37, so it is intentionally deferred until
+the supported Cordova Android toolchain advances. See the
+[official changelog](https://square.github.io/okhttp/changelogs/changelog/). Daykeeper's AARs
+require consumer compile SDK 36; this does not raise the declared runtime minimum
+or silently change a host app's target SDK. The example targets 36. The build uses
 the [supported AGP 9.2 toolchain](https://developer.android.com/build/releases/agp-9-2-0-release-notes)
 and [built-in Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin),
 with no AAR metadata override or unsupported-compile suppression. Other build
-toolchain combinations and all native runtime claims still need verification.
+toolchain combinations and all native runtime claims still need verification. API 36 also matches
+the supported/default compile SDK in Cordova Android 15.1.0, avoiding a preview-SDK requirement for
+hybrid consumers.
 Dependency currency is not a completed security audit.
 
 ## Verification levels

@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Upgrade to the supported Android37/AGP9.2.1/Gradle9.4.1 build and OkHttp5.5.0;
+- Upgrade to AGP9.2.1/Gradle9.4.1, compile against Android36 for Cordova Android
+  compatibility, and pin OkHttp5.4.0 as the latest release with an API36 AAR;
   retain API23 as the declared, still-to-be-device-certified runtime minimum.
 - Require successful fresh reads before uncertain-write recovery can be confirmed,
   and verify exact resolved artifact hashes in the independent Maven consumer.

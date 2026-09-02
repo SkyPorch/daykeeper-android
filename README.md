@@ -16,7 +16,7 @@ only publishes snapshots to an isolated local verification repository; it has no
 remote publishing credentials or release automation. Install an exact approved
 version after release, never `latest.release` or a dynamic range.
 
-Android API 23 is the declared minimum; consumers must compile against API 37.
+Android API 23 is the declared minimum; consumers must compile against API 36.
 Build verification uses JDK 17, AGP 9.2.1, Gradle 9.4.1 and built-in Kotlin 2.2.10.
 See [compatibility](COMPATIBILITY.md) for what
 has actually been tested, dependency choices and remaining device gates.
@@ -116,7 +116,7 @@ not implemented. See [release gates](COMPATIBILITY.md).
   -PdaykeeperRepository="$PWD/build/repository" testDebugUnitTest assembleRelease --refresh-dependencies
 ```
 
-Set `ANDROID_HOME` to an SDK with `platforms;android-37.0` and Build Tools 36.0.0.
+Set `ANDROID_HOME` to an SDK with `platforms;android-36` and Build Tools 36.0.0.
 The CI consumer step also passes both freshly built AAR hashes to
 `verifyDaykeeperArtifacts`, so a stale snapshot cannot count as verification.
 Import this repository in
