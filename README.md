@@ -9,7 +9,7 @@ Central release or production compatibility certification is available yet.
 | Module | Intended Maven coordinate | Purpose |
 | --- | --- | --- |
 | `daykeeper` | `io.github.skyporch:daykeeper-android` | Customer identity, conversations, messages, unread state and anonymous claims |
-| `daykeeper-ui` | `io.github.skyporch:daykeeper-android-ui` | Native conversation list, history, composer and lifecycle handling |
+| `daykeeper-ui` | `io.github.skyporch:daykeeper-android-ui` | Android-view conversation list, history, composer and lifecycle handling (no Compose) |
 
 The namespace still needs ownership verification before publication. Hosted CI
 publishes exact-version candidates only to an isolated local verification
@@ -64,6 +64,11 @@ Create a `DaykeeperMessengerSession(client)` on the main thread and retain it in
 your host's `ViewModel`. Create a `DaykeeperMessengerView(context)` and call
 `bind(session, viewLifecycleOwner)` in a Fragment, or bind to the Activity's
 lifecycle. Use only one bound view per session. See the runnable [example](example).
+
+The messenger is built from platform Android views: a `ScrollView` around a
+`RecyclerView` list with a `ListAdapter` and `DiffUtil`, so a new message rebinds
+one row instead of rebuilding the thread. There is no Jetpack Compose dependency,
+and none is required of your app.
 
 The view pauses and redacts visible content when its lifecycle stops. Drafts
 remain in that same session's memory across navigation and rotation. On host-app

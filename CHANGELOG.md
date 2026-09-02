@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Keep the draft and loaded history when a token expires mid-send: one refreshed
+  identity read decides whether the customer is still signed in, and the write is
+  never replayed.
+- Read message history with the forward `after` cursor and add
+  `loadEarlierMessages()`, so refreshing a long thread no longer risks the
+  response size ceiling.
+- Accept any non-empty conversation status and expose it as
+  `DaykeeperConversationStatus`, with `Unknown(raw)` for a status added after this
+  release; one unfamiliar status no longer rejects the whole list.
+- Refuse plain HTTP in release builds, including loopback.
+- Render the message and conversation lists with a `RecyclerView` `ListAdapter`
+  and `DiffUtil` instead of rebuilding every row.
+- Move every user-facing string into `res/values/strings.xml`.
+
 - Add exact-version Maven Central candidate metadata, source/Javadoc artifacts,
   embedded-license and checksum validation, with registry upload kept outside CI.
 
