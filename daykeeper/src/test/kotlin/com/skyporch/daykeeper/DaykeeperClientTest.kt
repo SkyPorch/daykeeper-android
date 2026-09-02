@@ -382,4 +382,55 @@ class DaykeeperClientTest {
             assertEquals(0, server.requestCount)
         }
     }
+
+    @Test
+    fun unknownConversationStatusIsPreservedAndKeepsTheRestOfTheList() = server { server ->
+        val escalated =
+            conversation.replace("\"id\":7", "\"id\":8").replace("\"open\"", "\"escalated\"")
+        server.enqueue(
+            response("""{"conversations":[$conversation,$escalated],"widgetConversationId":null}""")
+        )
+        val list = client(server).listConversations()
+        assertEquals(listOf(7L, 8L), list.conversations.map { it.id })
+        assertEquals(DaykeeperConversationStatus.Open, list.conversations[0].conversationStatus)
+        assertEquals(
+            DaykeeperConversationStatus.Unknown("escalated"),
+            list.conversations[1].conversationStatus,
+        )
+        assertEquals("escalated", list.conversations[1].status)
+    }
+
+    @Test
+    fun blankConversationStatusIsStillRejected() = server { server ->
+        server.enqueue(
+            response(
+                """{"conversations":[${conversation.replace("\"open\"", "\" \"")}],"widgetConversationId":null}"""
+            )
+        )
+        assertEquals("INVALID_RESPONSE", failure { client(server).listConversations() }.code)
+    }
+
+    @Test
+    fun plainLoopbackIsRefusedWhenTheHostAppIsNotADebugBuild() = server { server ->
+        val url = server.url("/gateway/").toString()
+        val provider = DaykeeperTokenProvider { "synthetic-customer" }
+        // Debug builds keep the local-fixture convenience.
+        DaykeeperClient(url, provider, 30_000, true)
+        for (release in listOf(false)) {
+            try {
+                DaykeeperClient(url, provider, 30_000, release)
+                fail("Expected a release build to refuse plain HTTP")
+            } catch (error: DaykeeperException) {
+                assertEquals("INVALID_CONFIGURATION", error.code)
+            }
+        }
+    }
+
+    @Test
+    fun messageCursorIsSentAsTheAfterQueryParameter() = server { server ->
+        server.enqueue(response("""{"messages":[$message]}"""))
+        client(server).listMessages(7, 4)
+        val request = server.takeRequest()
+        assertEquals("/gateway/v1/conversations/7/messages?after=4", request.path)
+    }
 }

@@ -42,11 +42,20 @@ import okio.BufferedSink
  * Customer-only, coroutine SDK. No cookies, redirects, persistent cache or implicit write replay.
  * Token providers must be cooperative and must never switch customer identity within this client.
  */
-class DaykeeperClient(
+class DaykeeperClient
+internal constructor(
     baseUrl: String,
     private val tokenProvider: DaykeeperTokenProvider,
-    private val timeoutMillis: Long = 30_000,
+    private val timeoutMillis: Long,
+    allowPlainLoopback: Boolean,
 ) : DaykeeperCustomerClient {
+    @JvmOverloads
+    constructor(
+        baseUrl: String,
+        tokenProvider: DaykeeperTokenProvider,
+        timeoutMillis: Long = 30_000,
+    ) : this(baseUrl, tokenProvider, timeoutMillis, BuildConfig.DEBUG)
+
     private val base: String
     private val json = Json { ignoreUnknownKeys = true }
     private val http: OkHttpClient
@@ -66,7 +75,10 @@ class DaykeeperClient(
                 uri.rawQuery != null ||
                 uri.rawFragment != null ||
                 timeoutMillis !in 1_000..60_000 ||
-                (!url.isHttps && url.host !in setOf("localhost", "127.0.0.1", "::1"))
+                // Plain HTTP to a developer's own loopback fixture is a debug-build
+                // convenience. A release build refuses every unencrypted base URL.
+                (!url.isHttps &&
+                    !(allowPlainLoopback && url.host in setOf("localhost", "127.0.0.1", "::1")))
         )
             throw DaykeeperException("INVALID_CONFIGURATION")
         base = url.toString().trimEnd('/')
@@ -356,7 +368,9 @@ class DaykeeperClient(
                     safeId(it.id) &&
                         it.unreadCount >= 0 &&
                         it.unreadForContact >= 0 &&
-                        it.status in setOf("open", "pending", "resolved", "snoozed") &&
+                        // Statuses are extensible. Only a missing or blank one is malformed;
+                        // an unfamiliar status must not discard the whole list.
+                        it.status.isNotBlank() &&
                         timestamp(it.createdAt) &&
                         timestamp(it.updatedAt)
                 }

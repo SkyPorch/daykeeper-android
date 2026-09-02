@@ -12,6 +12,7 @@ android {
     namespace = "com.skyporch.daykeeper"
     compileSdk = 36
     defaultConfig { minSdk = 23 }
+    buildFeatures { buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

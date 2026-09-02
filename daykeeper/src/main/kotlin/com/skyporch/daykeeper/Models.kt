@@ -4,6 +4,40 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
+/**
+ * Conversation status as the gateway reports it. The set of statuses is open: a status this SDK
+ * release has never heard of is carried through as [Unknown] instead of failing the whole list.
+ */
+sealed class DaykeeperConversationStatus(val raw: String) {
+    object Open : DaykeeperConversationStatus("open")
+
+    object Pending : DaykeeperConversationStatus("pending")
+
+    object Resolved : DaykeeperConversationStatus("resolved")
+
+    object Snoozed : DaykeeperConversationStatus("snoozed")
+
+    /** A status added by the gateway after this SDK release. Read [raw] to display or log it. */
+    class Unknown(raw: String) : DaykeeperConversationStatus(raw) {
+        override fun equals(other: Any?) = other is Unknown && other.raw == raw
+
+        override fun hashCode() = raw.hashCode()
+    }
+
+    override fun toString() = raw
+
+    companion object {
+        fun of(raw: String): DaykeeperConversationStatus =
+            when (raw) {
+                Open.raw -> Open
+                Pending.raw -> Pending
+                Resolved.raw -> Resolved
+                Snoozed.raw -> Snoozed
+                else -> Unknown(raw)
+            }
+    }
+}
+
 /** Timestamps remain JSON integers, strings or null; the SDK does not infer local time. */
 @Serializable
 data class DaykeeperConversation(
@@ -16,7 +50,11 @@ data class DaykeeperConversation(
     val unreadForContact: Int,
     val lastSeenAt: Long?,
     val preview: String?,
-)
+) {
+    /** Typed view of [status]. Never throws; an unfamiliar value becomes Unknown. */
+    val conversationStatus: DaykeeperConversationStatus
+        get() = DaykeeperConversationStatus.of(status)
+}
 
 @Serializable
 data class DaykeeperAttachment(
