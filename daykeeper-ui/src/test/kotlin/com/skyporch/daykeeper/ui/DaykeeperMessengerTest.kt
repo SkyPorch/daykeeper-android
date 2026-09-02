@@ -4,6 +4,7 @@
 package com.skyporch.daykeeper.ui
 
 import android.app.Activity
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -33,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /** JVM Android-view/lifecycle tests. These do not substitute for device instrumentation. */
@@ -268,6 +270,7 @@ class DaykeeperMessengerTest {
             assertTrue(button(view, "Send message").isEnabled)
             button(view, "Send message").performClick()
             advanceUntilIdle()
+            settle(view)
             assertTrue(
                 descendants(view).filterIsInstance<TextView>().any {
                     it.text.contains("view message")
@@ -278,6 +281,7 @@ class DaykeeperMessengerTest {
             owner.lifecycle.currentState = Lifecycle.State.CREATED
             advanceUntilIdle()
             assertEquals("", composer.text.toString())
+            settle(view)
             assertFalse(
                 descendants(view).filterIsInstance<TextView>().any {
                     it.text.contains("view message")
@@ -483,6 +487,105 @@ class DaykeeperMessengerTest {
             activity.finish()
         }
 
+    @Test
+    fun expiredTokenOnSendKeepsDraftAndHistoryAndMarksItForReview() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("first")
+            session.sendMessage()
+            advanceUntilIdle()
+            assertEquals(1, session.state.value.messages.size)
+            session.setDraft("please keep this")
+            client.sendFailure = responseError(401, "expired_token")
+            session.sendMessage()
+            advanceUntilIdle()
+            assertFalse("One expired token must not sign the customer out", session.state.value.signedOut)
+            assertEquals("please keep this", session.state.value.draft)
+            assertEquals(1, session.state.value.messages.size)
+            assertTrue("The send needs review, not a resend", session.state.value.uncertainMessage)
+            assertEquals("Exactly one recovery read", 1, client.identityReads)
+            assertEquals("The write is never replayed", 2, client.sends)
+            session.reset()
+        }
+
+    @Test
+    fun expiredTokenOnSendSignsOutOnlyWhenTheRefreshedReadAlsoFails() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("gone with the session")
+            client.sendFailure = responseError(401, "expired_token")
+            client.identityFailure = responseError(401, "expired_token")
+            session.sendMessage()
+            advanceUntilIdle()
+            assertTrue(session.state.value.signedOut)
+            assertEquals("", session.state.value.draft)
+            assertTrue(session.state.value.messages.isEmpty())
+            assertEquals(1, client.identityReads)
+            assertEquals(1, client.sends)
+        }
+
+    @Test
+    fun refreshPagesFromTheLastMessageSoAnOversizedThreadStaysReadable() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            client.messages.add(message(1))
+            session.refresh()
+            advanceUntilIdle()
+            assertEquals(listOf(1L), session.state.value.messages.map { it.id })
+            // The thread has grown past the transport ceiling: reading the whole
+            // conversation in one response would now fail outright.
+            client.uncursoredHistoryFailure = responseError(500)
+            client.messages.add(message(2))
+            client.cursors.clear()
+            session.refresh()
+            advanceUntilIdle()
+            assertNull(session.state.value.errorCode)
+            assertEquals(listOf(1L, 2L), session.state.value.messages.map { it.id })
+            assertEquals("Refresh asks only for messages after the last one held", listOf<Long?>(1L), client.cursors)
+            session.reset()
+        }
+
+    @Test
+    fun loadEarlierMessagesMergesWithoutDroppingWhatIsAlreadyLoaded() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            client.messages.add(message(5))
+            session.refresh()
+            advanceUntilIdle()
+            assertEquals(listOf(5L), session.state.value.messages.map { it.id })
+            assertTrue(session.state.value.canLoadEarlier)
+            client.messages.add(0, message(4))
+            client.messages.add(0, message(3))
+            session.refresh()
+            advanceUntilIdle()
+            assertEquals("A cursored refresh cannot see older messages", listOf(5L), session.state.value.messages.map { it.id })
+            session.loadEarlierMessages()
+            advanceUntilIdle()
+            assertEquals(listOf(3L, 4L, 5L), session.state.value.messages.map { it.id })
+            assertEquals("Reading history is never a write", 0, client.sends)
+            session.reset()
+        }
+
     // Obtain the SDK's real sanitized error through its public API; no internal-constructor bypass.
     private fun responseError(status: Int, code: String = "support_upstream_unavailable") =
         runBlocking {
@@ -506,6 +609,32 @@ class DaykeeperMessengerTest {
                 }
             }
         }
+
+    /**
+     * RecyclerView rows appear only after the list diff is dispatched on the main looper and the
+     * hierarchy has had a measure/layout pass.
+     */
+    private fun settle(view: View) {
+        shadowOf(Looper.getMainLooper()).idle()
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, 1080, 1920)
+    }
+
+    private fun message(id: Long, conversationId: Long = 1L) =
+        DaykeeperMessage(
+            id,
+            conversationId,
+            "Message $id",
+            "text",
+            JsonObject(emptyMap()),
+            1,
+            null,
+            null,
+            emptyList(),
+        )
 
     private fun descendants(view: View): List<View> =
         listOf(view) +
@@ -531,11 +660,17 @@ class DaykeeperMessengerTest {
         var createFailure: DaykeeperException? = null
         var sendFailure: DaykeeperException? = null
         var listFailure: DaykeeperException? = null
+        var identityFailure: DaykeeperException? = null
+        var uncursoredHistoryFailure: DaykeeperException? = null
+        var identityReads = 0
+        val cursors = mutableListOf<Long?>()
         val threads = mutableListOf<DaykeeperConversation>()
         val messages = mutableListOf<DaykeeperMessage>()
 
-        override suspend fun getIdentity() =
-            DaykeeperCustomerIdentity(
+        override suspend fun getIdentity(): DaykeeperCustomerIdentity {
+            identityReads++
+            identityFailure?.let { throw it }
+            return DaykeeperCustomerIdentity(
                 "https://support.example",
                 "demo",
                 "demo",
@@ -544,6 +679,7 @@ class DaykeeperMessengerTest {
                 null,
                 "Demo",
             )
+        }
 
         override suspend fun listConversations(): DaykeeperConversationList {
             listFailure?.let { throw it }
@@ -571,8 +707,18 @@ class DaykeeperMessengerTest {
             return DaykeeperSeenResult(conversationId, true, 0)
         }
 
-        override suspend fun listMessages(conversationId: Long, after: Long?) =
-            DaykeeperMessageList(messages.filter { it.conversationId == conversationId })
+        override suspend fun listMessages(
+            conversationId: Long,
+            after: Long?,
+        ): DaykeeperMessageList {
+            cursors.add(after)
+            if (after == null) uncursoredHistoryFailure?.let { throw it }
+            return DaykeeperMessageList(
+                messages.filter {
+                    it.conversationId == conversationId && (after == null || it.id > after)
+                }
+            )
+        }
 
         override suspend fun sendMessage(
             conversationId: Long,
