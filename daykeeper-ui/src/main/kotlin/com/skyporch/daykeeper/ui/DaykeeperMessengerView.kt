@@ -8,6 +8,7 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.AttributeSet
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -19,6 +20,11 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.AsyncDifferConfig
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -32,27 +38,40 @@ constructor(
     private var session: DaykeeperMessengerSession? = null
     private var owner: LifecycleOwner? = null
     private var collection: Job? = null
-    private var previous: DaykeeperMessengerState? = null
-    private val heading = label("Support", 24f)
+    private val heading = label(string(R.string.daykeeper_title), 24f)
     private val status =
         label("", 16f).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
-    private val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val rowAdapter = RowAdapter()
+    // A list adapter with a diff so a new message rebinds one row instead of rebuilding the
+    // whole thread. Scrolling stays with the outer ScrollView so large text and IME insets keep
+    // working exactly as before.
+    private val rows =
+        RecyclerView(context).apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = rowAdapter
+            isNestedScrollingEnabled = false
+            itemAnimator = null
+            isSaveEnabled = false
+        }
     private val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    private val back = action("Conversations") { session?.showConversations() }
-    private val refresh = action("Refresh") { session?.refresh() }
-    private val logout = action("Sign out of support") { session?.reset() }
-    private val create = action("New conversation") { session?.createConversation() }
-    private val seen = action("Mark read") { session?.markRead() }
+    private val back = action(string(R.string.daykeeper_back)) { session?.showConversations() }
+    private val refresh = action(string(R.string.daykeeper_refresh)) { session?.refresh() }
+    private val logout = action(string(R.string.daykeeper_sign_out)) { session?.reset() }
+    private val create =
+        action(string(R.string.daykeeper_new_conversation)) { session?.createConversation() }
+    private val seen = action(string(R.string.daykeeper_mark_read)) { session?.markRead() }
+    private val earlier =
+        action(string(R.string.daykeeper_load_earlier)) { session?.loadEarlierMessages() }
     private val recover =
-        action("Review complete") {
+        action(string(R.string.daykeeper_review_complete)) {
             if (session?.state?.value?.conversationId == null)
                 session?.acknowledgeUncertainCreation()
             else session?.discardUncertainDraft()
         }
     private val composer =
         EditText(context).apply {
-            hint = "Write a message"
-            contentDescription = "Message"
+            hint = string(R.string.daykeeper_composer_hint)
+            contentDescription = string(R.string.daykeeper_composer_description)
             inputType =
                 InputType.TYPE_CLASS_TEXT or
                     InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -89,7 +108,7 @@ constructor(
             )
         }
     private val send =
-        action("Send message") {
+        action(string(R.string.daykeeper_send)) {
             session?.sendMessage()
             composer.clearFocus()
             (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
@@ -128,6 +147,7 @@ constructor(
             }
         )
         column.addView(status)
+        column.addView(earlier)
         // The whole messenger scrolls when large text/IME insets consume the viewport;
         // fixed composer/error chrome must not make history impossible to review.
         column.addView(
@@ -159,7 +179,6 @@ constructor(
         owner?.lifecycle?.removeObserver(observer)
         owner = null
         session = null
-        previous = null
         render(DaykeeperMessengerState())
     }
 
@@ -191,19 +210,20 @@ constructor(
     private fun render(state: DaykeeperMessengerState) {
         val active = !state.suspended && !state.signedOut
         val thread = active && state.conversationId != null
-        heading.text = if (thread) "Conversation ${state.conversationId}" else "Support"
+        heading.text =
+            if (thread)
+                string(R.string.daykeeper_conversation_heading, state.conversationId ?: 0L)
+            else string(R.string.daykeeper_title)
         status.text =
             when {
-                state.signedOut -> "Signed out of support. Sign in again through the app."
-                !active -> "Support is paused."
-                state.uncertainMessage ->
-                    "Delivery is unconfirmed. Refresh and review the conversation before discarding this draft. No message will be resent automatically."
-                state.uncertainCreation ->
-                    "Creation is unconfirmed. Refresh and review your conversations before starting another."
+                state.signedOut -> string(R.string.daykeeper_status_signed_out)
+                !active -> string(R.string.daykeeper_status_paused)
+                state.uncertainMessage -> string(R.string.daykeeper_status_uncertain_message)
+                state.uncertainCreation -> string(R.string.daykeeper_status_uncertain_creation)
                 state.errorCode == "daykeeper_usage_limit_exceeded" ->
-                    "Your workspace has reached its support limit. Existing conversations are still available."
-                state.errorCode != null -> "Unable to finish. Refresh to check the latest state."
-                state.busy -> "Updating…"
+                    string(R.string.daykeeper_status_usage_limit)
+                state.errorCode != null -> string(R.string.daykeeper_status_error)
+                state.busy -> string(R.string.daykeeper_status_busy)
                 else -> ""
             }
         back.visibility = if (thread) VISIBLE else GONE
@@ -211,11 +231,14 @@ constructor(
         seen.visibility = if (thread) VISIBLE else GONE
         composer.visibility = if (thread) VISIBLE else GONE
         send.visibility = if (thread) VISIBLE else GONE
+        earlier.visibility = if (thread && state.canLoadEarlier) VISIBLE else GONE
         recover.visibility =
             if (active && (if (thread) state.uncertainMessage else state.uncertainCreation)) VISIBLE
             else GONE
-        recover.text = if (thread) "Discard uncertain draft" else "I reviewed the conversations"
-        listOf(back, refresh, logout, seen, recover).forEach {
+        recover.text =
+            if (thread) string(R.string.daykeeper_discard_draft)
+            else string(R.string.daykeeper_reviewed_conversations)
+        listOf(back, refresh, logout, seen, recover, earlier).forEach {
             it.isEnabled = active && !state.busy
         }
         logout.isEnabled = active
@@ -224,49 +247,56 @@ constructor(
         composer.isEnabled = thread && !state.busy && !state.uncertainMessage
         send.isEnabled = composer.isEnabled && state.draft.isNotBlank()
         if (composer.text.toString() != state.draft) composer.setText(state.draft)
-        val prior = previous
-        if (
-            prior == null ||
-                prior.conversations != state.conversations ||
-                prior.messages != state.messages ||
-                prior.conversationId != state.conversationId ||
-                prior.suspended != state.suspended ||
-                prior.signedOut != state.signedOut
-        ) {
-            rows.removeAllViews()
-            if (active) {
-                if (thread) {
-                    if (state.messages.isEmpty())
-                        rows.addView(label("No messages yet. Write the first message below."))
-                    state.messages.forEach { message ->
-                        rows.addView(
-                            label(
-                                "${message.sender?.name ?: if (message.messageType == 0) "You" else "Support"}\n${message.content.orEmpty()}"
-                            )
+        rowAdapter.submitList(rowsFor(state, active, thread))
+    }
+
+    private fun rowsFor(
+        state: DaykeeperMessengerState,
+        active: Boolean,
+        thread: Boolean,
+    ): List<Row> {
+        if (!active) return emptyList()
+        if (thread) {
+            if (state.messages.isEmpty())
+                return listOf(Row.Text("empty", string(R.string.daykeeper_empty_messages)))
+            return state.messages.flatMap { message ->
+                val author =
+                    message.sender?.name
+                        ?: string(
+                            if (message.messageType == 0) R.string.daykeeper_sender_you
+                            else R.string.daykeeper_sender_support
                         )
-                        if (message.attachments.isNotEmpty())
-                            rows.addView(
-                                label(
-                                    "${message.attachments.size} attachment(s). Viewing attachments is not yet supported."
-                                )
-                            )
-                    }
-                } else {
-                    if (state.conversations.isEmpty())
-                        rows.addView(label("No conversations yet. Start one when you need help."))
-                    state.conversations.forEach { item ->
-                        rows.addView(
-                            action(
-                                "Conversation ${item.id} · ${item.status} · ${item.unreadForContact} unread\n${item.preview.orEmpty()}"
-                            ) {
-                                session?.openConversation(item.id)
-                            }
-                        )
-                    }
-                }
+                val body =
+                    Row.Text(
+                        "message-${message.id}",
+                        string(R.string.daykeeper_message_row, author, message.content.orEmpty()),
+                    )
+                if (message.attachments.isEmpty()) listOf(body)
+                else
+                    listOf(
+                        body,
+                        Row.Text(
+                            "attachments-${message.id}",
+                            string(R.string.daykeeper_attachments, message.attachments.size),
+                        ),
+                    )
             }
         }
-        previous = state
+        if (state.conversations.isEmpty())
+            return listOf(Row.Text("empty", string(R.string.daykeeper_empty_conversations)))
+        return state.conversations.map { item ->
+            Row.Action(
+                "conversation-${item.id}",
+                string(
+                    R.string.daykeeper_conversation_row,
+                    item.id,
+                    item.status,
+                    item.unreadForContact,
+                    item.preview.orEmpty(),
+                ),
+                item.id,
+            )
+        }
     }
 
     private fun label(value: String, size: Float = 16f) =
@@ -289,4 +319,63 @@ constructor(
         }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun string(id: Int, vararg arguments: Any) =
+        if (arguments.isEmpty()) context.getString(id) else context.getString(id, *arguments)
+
+    /** One rendered line. [key] identifies the line so a diff can leave untouched rows alone. */
+    private sealed interface Row {
+        val key: String
+        val text: String
+
+        data class Text(override val key: String, override val text: String) : Row
+
+        data class Action(
+            override val key: String,
+            override val text: String,
+            val conversationId: Long,
+        ) : Row
+    }
+
+    private class RowHolder(view: View) : RecyclerView.ViewHolder(view)
+
+    private inner class RowAdapter :
+        ListAdapter<Row, RowHolder>(
+            AsyncDifferConfig.Builder(
+                    object : DiffUtil.ItemCallback<Row>() {
+                        override fun areItemsTheSame(oldItem: Row, newItem: Row) =
+                            oldItem.key == newItem.key
+
+                        override fun areContentsTheSame(oldItem: Row, newItem: Row) =
+                            oldItem == newItem
+                    }
+                )
+                // Diff on the caller's thread so the visible list matches the state that was
+                // just rendered; threads are short and rows are plain text.
+                .setBackgroundThreadExecutor { it.run() }
+                .build()
+        ) {
+        override fun getItemViewType(position: Int) = if (getItem(position) is Row.Action) 1 else 0
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RowHolder {
+            val view = if (viewType == 1) action("") {} else label("")
+            view.layoutParams =
+                RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            return RowHolder(view)
+        }
+
+        override fun onBindViewHolder(holder: RowHolder, position: Int) {
+            when (val row = getItem(position)) {
+                is Row.Text -> (holder.itemView as TextView).text = row.text
+                is Row.Action ->
+                    (holder.itemView as Button).apply {
+                        text = row.text
+                        setOnClickListener { session?.openConversation(row.conversationId) }
+                    }
+            }
+        }
+    }
 }

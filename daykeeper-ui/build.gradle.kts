@@ -26,6 +26,7 @@ kotlin {
 dependencies {
     api(project(":daykeeper"))
     api("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16.1")

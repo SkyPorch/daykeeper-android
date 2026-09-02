@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every user-facing string in the Daykeeper messenger. English is the base
+  language; add further values-<locale> directories to translate. Names are
+  prefixed with daykeeper_ so they cannot collide with a host app's resources.
+-->
+<resources>
+    <string name="daykeeper_title">Support</string>
+    <string name="daykeeper_conversation_heading">Conversation %1$d</string>
+
+    <string name="daykeeper_back">Conversations</string>
+    <string name="daykeeper_refresh">Refresh</string>
+    <string name="daykeeper_sign_out">Sign out of support</string>
+    <string name="daykeeper_new_conversation">New conversation</string>
+    <string name="daykeeper_mark_read">Mark read</string>
+    <string name="daykeeper_review_complete">Review complete</string>
+    <string name="daykeeper_discard_draft">Discard uncertain draft</string>
+    <string name="daykeeper_reviewed_conversations">I reviewed the conversations</string>
+    <string name="daykeeper_load_earlier">Load earlier messages</string>
+
+    <string name="daykeeper_composer_hint">Write a message</string>
+    <string name="daykeeper_composer_description">Message</string>
+    <string name="daykeeper_send">Send message</string>
+
+    <string name="daykeeper_status_signed_out">Signed out of support. Sign in again through the app.</string>
+    <string name="daykeeper_status_paused">Support is paused.</string>
+    <string name="daykeeper_status_uncertain_message">Delivery is unconfirmed. Refresh and review the conversation before discarding this draft. No message will be resent automatically.</string>
+    <string name="daykeeper_status_uncertain_creation">Creation is unconfirmed. Refresh and review your conversations before starting another.</string>
+    <string name="daykeeper_status_usage_limit">Your workspace has reached its support limit. Existing conversations are still available.</string>
+    <string name="daykeeper_status_error">Unable to finish. Refresh to check the latest state.</string>
+    <string name="daykeeper_status_busy">Updating…</string>
+
+    <string name="daykeeper_empty_messages">No messages yet. Write the first message below.</string>
+    <string name="daykeeper_empty_conversations">No conversations yet. Start one when you need help.</string>
+    <string name="daykeeper_sender_you">You</string>
+    <string name="daykeeper_sender_support">Support</string>
+    <!-- %1$s is the author, %2$s is the message text. -->
+    <string name="daykeeper_message_row">%1$s\n%2$s</string>
+    <!-- %1$d is the number of files attached to a message. -->
+    <string name="daykeeper_attachments">%1$d attachment(s). Viewing attachments is not yet supported.</string>
+    <!-- %1$d conversation number, %2$s status, %3$d unread count, %4$s preview. -->
+    <string name="daykeeper_conversation_row">Conversation %1$d · %2$s · %3$d unread\n%4$s</string>
+</resources>
