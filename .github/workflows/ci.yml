@@ -35,6 +35,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      DAYKEEPER_CANDIDATE_VERSION: 0.1.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -48,12 +50,15 @@ jobs:
       - name: Verify contract snapshot
         run: echo 'b62dd386a87380f3fe94f968ff8fedf703ca6079199ea74057d32e31f91e1fec  openapi/customer.yaml' | sha256sum --check
       - name: Tests, lint, R8 example, instrumentation compilation and local packaging
-        run: ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint :example:assembleRelease :example:assembleDebugAndroidTest publishAllPublicationsToVerificationRepository --no-daemon --console=plain
+        run: ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint :example:assembleRelease :example:assembleDebugAndroidTest publishAllPublicationsToVerificationRepository -PdaykeeperVersion="$DAYKEEPER_CANDIDATE_VERSION" --no-daemon --console=plain
+      - name: Exact Maven candidate
+        run: bash Scripts/check-maven-candidate.sh "$DAYKEEPER_CANDIDATE_VERSION"
       - name: Independent Maven consumer
         run: |
           daykeeper_core_sha=$(sha256sum daykeeper/build/outputs/aar/daykeeper-release.aar | cut -d' ' -f1)
           daykeeper_ui_sha=$(sha256sum daykeeper-ui/build/outputs/aar/daykeeper-ui-release.aar | cut -d' ' -f1)
           ./gradlew -p verification/consumer -PdaykeeperRepository="$GITHUB_WORKSPACE/build/repository" \
+            -PdaykeeperVersion="$DAYKEEPER_CANDIDATE_VERSION" \
             -PdaykeeperExpectedCoreSha256="$daykeeper_core_sha" -PdaykeeperExpectedUiSha256="$daykeeper_ui_sha" \
             verifyDaykeeperArtifacts testDebugUnitTest assembleRelease --refresh-dependencies --no-daemon --console=plain
       # No automatic device selection, Maven Central publication or production access.

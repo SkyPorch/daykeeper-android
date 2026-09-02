@@ -11,10 +11,12 @@ Central release or production compatibility certification is available yet.
 | `daykeeper` | `io.github.skyporch:daykeeper-android` | Customer identity, conversations, messages, unread state and anonymous claims |
 | `daykeeper-ui` | `io.github.skyporch:daykeeper-android-ui` | Native conversation list, history, composer and lifecycle handling |
 
-The namespace still needs ownership verification before publication. The build
-only publishes snapshots to an isolated local verification repository; it has no
-remote publishing credentials or release automation. Install an exact approved
-version after release, never `latest.release` or a dynamic range.
+The namespace still needs ownership verification before publication. Hosted CI
+publishes exact-version candidates only to an isolated local verification
+repository; it has no remote publishing credentials or release workflow. The
+Central target is opt-in for a separately approved operator handoff and never
+automatically promotes a validated deployment. Install an exact approved version
+after release, never `latest.release` or a dynamic range.
 
 Android API 23 is the declared minimum; consumers must compile against API 36.
 Build verification uses JDK 17, AGP 9.2.1, Gradle 9.4.1 and built-in Kotlin 2.2.10.
@@ -111,9 +113,11 @@ not implemented. See [release gates](COMPATIBILITY.md).
 ```sh
 ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint \
   :example:assembleRelease :example:assembleDebugAndroidTest \
-  publishAllPublicationsToVerificationRepository
+  publishAllPublicationsToVerificationRepository -PdaykeeperVersion=0.1.0
+bash Scripts/check-maven-candidate.sh 0.1.0
 ./gradlew -p verification/consumer \
-  -PdaykeeperRepository="$PWD/build/repository" testDebugUnitTest assembleRelease --refresh-dependencies
+  -PdaykeeperRepository="$PWD/build/repository" -PdaykeeperVersion=0.1.0 \
+  testDebugUnitTest assembleRelease --refresh-dependencies
 ```
 
 Set `ANDROID_HOME` to an SDK with `platforms;android-36` and Build Tools 36.0.0.

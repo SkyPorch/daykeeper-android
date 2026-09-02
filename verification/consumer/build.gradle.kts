@@ -4,6 +4,8 @@ plugins {
     id("com.android.library") version "9.2.1"
 }
 
+val daykeeperVersion = providers.gradleProperty("daykeeperVersion").get()
+
 android {
     namespace = "com.skyporch.daykeeper.verification"
     compileSdk = 36
@@ -20,8 +22,8 @@ kotlin {
 }
 
 dependencies {
-    implementation("io.github.skyporch:daykeeper-android:0.1.0-SNAPSHOT")
-    implementation("io.github.skyporch:daykeeper-android-ui:0.1.0-SNAPSHOT")
+    implementation("io.github.skyporch:daykeeper-android:$daykeeperVersion")
+    implementation("io.github.skyporch:daykeeper-android-ui:$daykeeperVersion")
     testImplementation("junit:junit:4.13.2")
 }
 

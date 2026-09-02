@@ -14,4 +14,7 @@ Review cancellation, customer switches, draft preservation, response binding,
 redirects, cookies, retries, unknown write outcomes, API compatibility and privacy
 on every relevant change. Releases, namespace verification, public visibility,
 production deployment and billing changes require separate maintainer approval.
-The local verification repository is not a remote release.
+The local verification repository is not a remote release. Build an exact Maven
+candidate with `-PdaykeeperVersion=MAJOR.MINOR.PATCH`, then run
+`bash Scripts/check-maven-candidate.sh MAJOR.MINOR.PATCH`. Never provide registry
+or signing credentials to a pull-request job.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add exact-version Maven Central candidate metadata, source/Javadoc artifacts,
+  embedded-license and checksum validation, with registry upload kept outside CI.
+
 - Upgrade to AGP9.2.1/Gradle9.4.1, compile against Android36 for Cordova Android
   compatibility, and pin OkHttp5.4.0 as the latest release with an API36 AAR;
   retain API23 as the declared, still-to-be-device-certified runtime minimum.

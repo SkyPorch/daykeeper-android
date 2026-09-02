@@ -40,8 +40,10 @@ Dependency currency is not a completed security audit.
 - Instrumented UI tests are supplied for a real Android runtime. Until an
   authorized device/CI run is recorded, their compilation is the only claim.
 - Local Maven verification publishes AARs, sources, POMs and Gradle metadata into
-  the repository's build directory. It is not a Maven Central publication.
-  The separate consumer refreshes snapshot resolution and checks that both
+  the repository's build directory at exact version `0.1.0`. The candidate gate
+  checks required POM fields, module coordinates, source/Javadoc jars, embedded
+  licenses and SHA-256 sidecars. It is not a Maven Central publication.
+  The separate consumer refreshes dependency resolution and checks that both
   resolved AAR hashes equal the freshly built artifacts before accepting results.
 
 ## Required before production release

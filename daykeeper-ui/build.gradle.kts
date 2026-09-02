@@ -1,6 +1,10 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
+
 plugins {
     id("com.android.library")
-    `maven-publish`
+    id("com.vanniktech.maven.publish")
 }
 
 android {
@@ -12,7 +16,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     testOptions { unitTests.isIncludeAndroidResources = true }
-    publishing { singleVariant("release") { withSourcesJar() } }
 }
 
 kotlin {
@@ -31,35 +34,48 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
-                from(components["release"])
-                artifactId = "daykeeper-android-ui"
-                pom {
-                    name.set("Daykeeper Android Messenger")
-                    description.set("Native Android customer messenger for Daykeeper")
-                    url.set("https://github.com/SkyPorch/daykeeper-android")
-                    licenses {
-                        license {
-                            name.set("MIT")
-                            url.set("https://opensource.org/license/mit/")
-                        }
-                    }
-                    developers {
-                        developer {
-                            id.set("skyporch")
-                            name.set("SkyPorch")
-                        }
-                    }
-                    scm {
-                        url.set("https://github.com/SkyPorch/daykeeper-android")
-                        connection.set("scm:git:https://github.com/SkyPorch/daykeeper-android.git")
-                    }
-                }
+mavenPublishing {
+    configure(
+        AndroidSingleVariantLibrary(
+            javadocJar = JavadocJar.Empty(),
+            sourcesJar = SourcesJar.Sources(),
+            variant = "release",
+        ),
+    )
+    coordinates(group.toString(), "daykeeper-android-ui", version.toString())
+    pom {
+        name.set("Daykeeper Android Messenger")
+        description.set("Native Android customer messenger for Daykeeper")
+        inceptionYear.set("2026")
+        url.set("https://github.com/SkyPorch/daykeeper-android")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/license/mit/")
+                distribution.set("repo")
             }
         }
+        developers {
+            developer {
+                id.set("skyporch")
+                name.set("SkyPorch")
+                url.set("https://github.com/SkyPorch")
+            }
+        }
+        scm {
+            url.set("https://github.com/SkyPorch/daykeeper-android")
+            connection.set("scm:git:https://github.com/SkyPorch/daykeeper-android.git")
+            developerConnection.set("scm:git:ssh://git@github.com/SkyPorch/daykeeper-android.git")
+        }
+    }
+    if (providers.gradleProperty("daykeeperCentralRelease").orNull == "true") {
+        publishToMavenCentral(automaticRelease = false)
+        signAllPublications()
+    }
+}
+
+afterEvaluate {
+    publishing {
         repositories {
             maven {
                 name = "verification"
