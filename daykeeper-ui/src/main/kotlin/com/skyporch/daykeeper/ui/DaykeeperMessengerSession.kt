@@ -30,6 +30,8 @@ data class DaykeeperMessengerState(
     val uncertainCreation: Boolean = false,
     /** A fresh post-failure read completed; the user must still explicitly review and confirm. */
     val recoveryReady: Boolean = false,
+    /** A thread is open and at least one page of history is loaded. */
+    val canLoadEarlier: Boolean = false,
 )
 
 /**
@@ -113,7 +115,12 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         creationReviewed = false
         val summaries = it.listConversations().conversations
         currentCoroutineContext().ensureActive()
-        val messages = selected?.let { id -> it.listMessages(id).messages } ?: emptyList()
+        // Ask only for what is new. Re-reading a long thread in full can exceed the
+        // transport's response ceiling and make the whole conversation unreadable.
+        val cursor = state.value.messages.lastOrNull()?.id
+        val messages =
+            selected?.let { id -> merge(state.value.messages, it.listMessages(id, cursor).messages) }
+                ?: emptyList()
         currentCoroutineContext().ensureActive()
         selected?.takeIf { id -> id in uncertain }?.let { id -> reviewedUncertain.add(id) }
         if (selected == null && creationUncertain) creationReviewed = true
@@ -165,6 +172,22 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         }
     }
 
+    /**
+     * Ask the gateway for the conversation's default window again and fold in anything this client
+     * does not already hold. The customer contract exposes only a forward `after` cursor, so this is
+     * the widest backward request the SDK can make. It never drops loaded history and never writes.
+     */
+    fun loadEarlierMessages() {
+        main()
+        val id = selected ?: return
+        if (!state.value.canLoadEarlier) return
+        operate {
+            val page = it.listMessages(id, null).messages
+            currentCoroutineContext().ensureActive()
+            snapshot(state.value.conversations, merge(state.value.messages, page))
+        }
+    }
+
     /** After reading refreshed history, discard the uncertain draft; this never sends a message. */
     fun discardUncertainDraft() {
         main()
@@ -203,7 +226,32 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
                 if (revision != current) return@launch
                 val safe = error as? DaykeeperException
                 if (safe?.status == 401 || safe?.status == 403) {
-                    reset()
+                    if (kind == null) {
+                        // A rejected read means the credential is gone. Revoked access must
+                        // not leave previously loaded customer data on screen.
+                        reset()
+                        return@launch
+                    }
+                    // A write may have been accepted before the token expired. Do not throw the
+                    // draft and the history away on the first rejection: ask for one fresh token
+                    // and prove the customer is still signed in with a read. The write itself is
+                    // never resent.
+                    val stillSignedIn =
+                        try {
+                            activeClient.getIdentity()
+                            true
+                        } catch (_: Exception) {
+                            false
+                        }
+                    if (revision != current) return@launch
+                    if (!stillSignedIn) {
+                        reset()
+                        return@launch
+                    }
+                    markUncertain()
+                    mutableState.value =
+                        snapshot(state.value.conversations, state.value.messages)
+                            .copy(errorCode = safe.code)
                     return@launch
                 }
                 if (kind != null && (safe == null || safe.outcomeUnknown)) markUncertain()
@@ -225,6 +273,14 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         write = null
         job?.cancel()
     }
+
+    /** Pages may overlap; fold by identifier and keep the gateway's monotonic order. */
+    private fun merge(existing: List<DaykeeperMessage>, incoming: List<DaykeeperMessage>) =
+        if (incoming.isEmpty()) existing
+        else
+            (existing.associateBy { it.id } + incoming.associateBy { it.id })
+                .values
+                .sortedBy { it.id }
 
     private fun markUncertain() {
         if (write == "create") {
@@ -251,6 +307,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             uncertainMessage = selected in uncertain,
             uncertainCreation = creationUncertain,
             recoveryReady = selected?.let { it in reviewedUncertain } ?: creationReviewed,
+            canLoadEarlier = selected != null && messages.isNotEmpty(),
         )
 
     private fun usable() = client != null && !state.value.suspended
