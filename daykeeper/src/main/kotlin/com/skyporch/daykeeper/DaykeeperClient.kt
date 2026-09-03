@@ -269,9 +269,13 @@ internal constructor(
                 if (!write && attempt == 0 && wire.status == 401 && retryHint != false)
                     return@repeat
                 if (wire.status !in 200..299) {
-                    val code = (hint?.get("error") as? JsonPrimitive)?.contentOrNull
+                    // `message` is never read: it is free-form prose for a human reading the
+                    // gateway's own surfaces. Both fields must be actual JSON strings, so a
+                    // number, boolean, array or object is not coerced into something
+                    // code-shaped.
+                    val code = stringField(hint, "error")
                     throw DaykeeperException(
-                        code?.takeIf { it in DaykeeperException.safeCodes }
+                        code?.takeIf { DaykeeperException.isSafeCode(it) }
                             ?: "daykeeper_request_failed",
                         wire.status,
                         !write &&
@@ -279,6 +283,7 @@ internal constructor(
                                 ?: (wire.status == 408 ||
                                     wire.status == 429 ||
                                     wire.status >= 500)),
+                        nextAction = DaykeeperNextAction.of(stringField(hint, "nextAction")),
                     )
                 }
                 val result =
@@ -351,6 +356,9 @@ internal constructor(
                 }
             )
         }
+
+    private fun stringField(hint: JsonObject?, name: String) =
+        (hint?.get(name) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
     private fun positive(id: Long) {
         if (!safeId(id)) throw DaykeeperException("INVALID_CONFIGURATION")
