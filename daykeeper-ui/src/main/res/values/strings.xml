@@ -16,7 +16,6 @@
     <string name="daykeeper_review_complete">Review complete</string>
     <string name="daykeeper_discard_draft">Discard uncertain draft</string>
     <string name="daykeeper_reviewed_conversations">I reviewed the conversations</string>
-    <string name="daykeeper_load_earlier">Load earlier messages</string>
 
     <string name="daykeeper_composer_hint">Write a message</string>
     <string name="daykeeper_composer_description">Message</string>

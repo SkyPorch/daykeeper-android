@@ -20,10 +20,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -60,8 +58,6 @@ constructor(
     private val create =
         action(string(R.string.daykeeper_new_conversation)) { session?.createConversation() }
     private val seen = action(string(R.string.daykeeper_mark_read)) { session?.markRead() }
-    private val earlier =
-        action(string(R.string.daykeeper_load_earlier)) { session?.loadEarlierMessages() }
     private val recover =
         action(string(R.string.daykeeper_review_complete)) {
             if (session?.state?.value?.conversationId == null)
@@ -147,7 +143,6 @@ constructor(
             }
         )
         column.addView(status)
-        column.addView(earlier)
         // The whole messenger scrolls when large text/IME insets consume the viewport;
         // fixed composer/error chrome must not make history impossible to review.
         column.addView(
@@ -231,14 +226,13 @@ constructor(
         seen.visibility = if (thread) VISIBLE else GONE
         composer.visibility = if (thread) VISIBLE else GONE
         send.visibility = if (thread) VISIBLE else GONE
-        earlier.visibility = if (thread && state.canLoadEarlier) VISIBLE else GONE
         recover.visibility =
             if (active && (if (thread) state.uncertainMessage else state.uncertainCreation)) VISIBLE
             else GONE
         recover.text =
             if (thread) string(R.string.daykeeper_discard_draft)
             else string(R.string.daykeeper_reviewed_conversations)
-        listOf(back, refresh, logout, seen, recover, earlier).forEach {
+        listOf(back, refresh, logout, seen, recover).forEach {
             it.isEnabled = active && !state.busy
         }
         logout.isEnabled = active
@@ -247,15 +241,21 @@ constructor(
         composer.isEnabled = thread && !state.busy && !state.uncertainMessage
         send.isEnabled = composer.isEnabled && state.draft.isNotBlank()
         if (composer.text.toString() != state.draft) composer.setText(state.draft)
-        rowAdapter.submitList(rowsFor(state, active, thread))
+        if (active) rowAdapter.submit(rowsFor(state, thread)) else redactRows()
     }
 
-    private fun rowsFor(
-        state: DaykeeperMessengerState,
-        active: Boolean,
-        thread: Boolean,
-    ): List<Row> {
-        if (!active) return emptyList()
+    /**
+     * Clearing must take effect now, not at the next layout pass: stopping the lifecycle has to
+     * hide the conversation immediately. Detaching the adapter removes the attached row views
+     * synchronously; re-attaching leaves an empty list.
+     */
+    private fun redactRows() {
+        rowAdapter.submit(emptyList())
+        rows.adapter = null
+        rows.adapter = rowAdapter
+    }
+
+    private fun rowsFor(state: DaykeeperMessengerState, thread: Boolean): List<Row> {
         if (thread) {
             if (state.messages.isEmpty())
                 return listOf(Row.Text("empty", string(R.string.daykeeper_empty_messages)))
@@ -339,36 +339,53 @@ constructor(
 
     private class RowHolder(view: View) : RecyclerView.ViewHolder(view)
 
-    private inner class RowAdapter :
-        ListAdapter<Row, RowHolder>(
-            AsyncDifferConfig.Builder(
-                    object : DiffUtil.ItemCallback<Row>() {
-                        override fun areItemsTheSame(oldItem: Row, newItem: Row) =
-                            oldItem.key == newItem.key
+    private inner class RowAdapter : RecyclerView.Adapter<RowHolder>() {
+        private var items = emptyList<Row>()
 
-                        override fun areContentsTheSame(oldItem: Row, newItem: Row) =
-                            oldItem == newItem
-                    }
+        /**
+         * Diffing happens here on the caller's thread rather than through AsyncListDiffer, so the
+         * visible list always matches the state that was just rendered and a redaction takes
+         * effect immediately instead of on a posted callback.
+         */
+        fun submit(next: List<Row>) {
+            val previous = items
+            items = next
+            DiffUtil.calculateDiff(
+                    object : DiffUtil.Callback() {
+                        override fun getOldListSize() = previous.size
+
+                        override fun getNewListSize() = next.size
+
+                        override fun areItemsTheSame(oldPosition: Int, newPosition: Int) =
+                            previous[oldPosition].key == next[newPosition].key
+
+                        override fun areContentsTheSame(oldPosition: Int, newPosition: Int) =
+                            previous[oldPosition] == next[newPosition]
+                    },
+                    false,
                 )
-                // Diff on the caller's thread so the visible list matches the state that was
-                // just rendered; threads are short and rows are plain text.
-                .setBackgroundThreadExecutor { it.run() }
-                .build()
-        ) {
-        override fun getItemViewType(position: Int) = if (getItem(position) is Row.Action) 1 else 0
+                .dispatchUpdatesTo(this)
+        }
+
+        override fun getItemCount() = items.size
+
+        override fun getItemViewType(position: Int) = if (items[position] is Row.Action) 1 else 0
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RowHolder {
             val view = if (viewType == 1) action("") {} else label("")
             view.layoutParams =
                 RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    )
+                    // Rows used to be siblings in a LinearLayout and kept a little air between
+                    // them; RecyclerView.LayoutParams starts with no margins at all.
+                    .apply { setMargins(0, dp(4), 0, dp(4)) }
             return RowHolder(view)
         }
 
         override fun onBindViewHolder(holder: RowHolder, position: Int) {
-            when (val row = getItem(position)) {
+            when (val row = items[position]) {
                 is Row.Text -> (holder.itemView as TextView).text = row.text
                 is Row.Action ->
                     (holder.itemView as Button).apply {
