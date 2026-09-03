@@ -2,18 +2,32 @@
 
 ## Unreleased
 
-- Keep the draft and loaded history when a token expires mid-send: one refreshed
-  identity read decides whether the customer is still signed in, and the write is
-  never replayed.
-- Read message history with the forward `after` cursor and add
-  `loadEarlierMessages()`, so refreshing a long thread no longer risks the
-  response size ceiling.
+- Keep the draft and loaded history when a token expires mid-send. One recovery
+  read decides what happened: a definite 401 or 403 leaves the draft editable and
+  sendable, a rejected recovery read or one naming a different customer signs the
+  session out, and any other failure is an ordinary error. The write is never
+  replayed, and read-marker recoveries are bounded to one per session generation.
+- Add `DaykeeperCustomerClient.getIdentityWithFreshToken()`, an identity read that
+  always asks the token provider for a new credential first, so a
+  `retryable: false` hint cannot suppress the recovery read. **This adds a member
+  to `DaykeeperCustomerClient`; a host that implements the interface itself must
+  add the method.**
+- Read message history with the forward `after` cursor. Refreshing an open thread,
+  and reopening one whose history this session still holds, ask only for messages
+  newer than the last one held. There is no backward cursor or page-size parameter
+  in the customer contract, so a thread whose first page already exceeds the 1 MiB
+  response cap still needs a gateway-side page parameter; no "load earlier" control
+  is offered, because re-requesting the same window repeats the failing request.
 - Accept any non-empty conversation status and expose it as
   `DaykeeperConversationStatus`, with `Unknown(raw)` for a status added after this
   release; one unfamiliar status no longer rejects the whole list.
-- Refuse plain HTTP in release builds, including loopback.
-- Render the message and conversation lists with a `RecyclerView` `ListAdapter`
-  and `DiffUtil` instead of rebuilding every row.
+- Refuse plain HTTP in release builds, including loopback. `DaykeeperClient` now
+  has an internal primary constructor carrying that decision and a public
+  `@JvmOverloads` secondary constructor with the previous parameters and default
+  timeout, so existing Kotlin and Java call sites are unchanged.
+- Render the message and conversation lists with a `RecyclerView` and a
+  synchronous `DiffUtil` pass instead of rebuilding every row, and detach the
+  adapter on stop so lifecycle redaction takes effect immediately.
 - Move every user-facing string into `res/values/strings.xml`.
 
 - Add exact-version Maven Central candidate metadata, source/Javadoc artifacts,

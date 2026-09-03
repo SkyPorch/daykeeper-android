@@ -22,5 +22,10 @@ update requires model, behavior and test review; do not silently regenerate a
 broader client containing server operations.
 
 The message list exposes only a forward `after` cursor. There is no `before` or
-page-size parameter, so the client can page forward from a known message but
-cannot ask the gateway for an older window.
+page-size parameter. The client can therefore page forward from a message it
+already holds, but it cannot ask the gateway for an older window, and it has no
+way to bound the size of the default window. A conversation whose default
+response exceeds the transport's 1 MiB ceiling stays unreadable until the
+gateway gains a page-size or backward-cursor parameter; no client-side change
+can fix it. Do not add a "load earlier" affordance that simply re-requests the
+same default window — it repeats the request that already failed.

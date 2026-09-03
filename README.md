@@ -65,6 +65,14 @@ your host's `ViewModel`. Create a `DaykeeperMessengerView(context)` and call
 `bind(session, viewLifecycleOwner)` in a Fragment, or bind to the Activity's
 lifecycle. Use only one bound view per session. See the runnable [example](example).
 
+Message history is read forward with the contract's `after` cursor. Refreshing an
+open thread, and reopening one whose history this session still holds, ask only
+for messages newer than the last one held, so a long conversation is not re-read
+in full. The customer contract has no backward cursor or page-size parameter, so
+the client cannot request an older window; a thread whose first page already
+exceeds the 1 MiB response cap needs a gateway-side page parameter before it can
+be opened.
+
 The messenger is built from platform Android views: a `ScrollView` around a
 `RecyclerView` list with a `ListAdapter` and `DiffUtil`, so a new message rebinds
 one row instead of rebuilding the thread. There is no Jetpack Compose dependency,
@@ -92,7 +100,13 @@ read-marker write refreshes server summaries so new unread arrivals are retained
 
 ## Security and privacy
 
-HTTPS is required except exact loopback hosts for isolated local testing.
+HTTPS is always required in a release build. Plain `http://` to an exact loopback
+host (`localhost`, `127.0.0.1`, `::1`) is accepted only when this SDK is compiled
+with `BuildConfig.DEBUG` true — that is the SDK module's own build configuration,
+not your app's. A source consumer building the library in debug gets the
+local-fixture convenience; the published release AAR compiles `BuildConfig.DEBUG`
+as false, so an app depending on the released artifact cannot reach a plain-HTTP
+gateway at all.
 The SDK rejects redirects, does not use cookies or persistent HTTP caching,
 and never exposes arbitrary server bodies or underlying exceptions as errors.
 The total request deadline includes token acquisition and response reading
