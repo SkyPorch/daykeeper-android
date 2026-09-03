@@ -452,4 +452,189 @@ class DaykeeperClientTest {
         server.takeRequest()
         assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
     }
+
+    /**
+     * Every error code the Daykeeper support gateway can put in the customer `{ "error": ... }`
+     * envelope, copied from `test/errorCodes.test.ts` in SkyPorch/daykeeper-react-native#14 so the
+     * three SDKs agree on exactly one projection rule. Consuming apps switch on these, so every
+     * one must arrive unchanged.
+     */
+    private val gatewayErrorCodes =
+        listOf(
+            // auth.mjs — SupportAuthError, 401 unless noted
+            "missing_bearer_token",
+            "invalid_bearer_token",
+            "invalid_token",
+            "invalid_tenant",
+            "unsupported_token",
+            "invalid_signature",
+            "invalid_issuer",
+            "invalid_audience",
+            "invalid_subject",
+            "invalid_expiration",
+            "expired_token",
+            "token_lifetime_too_long",
+            // server.mjs
+            "unknown_tenant",
+            "insufficient_scope",
+            "erasure_targets_do_not_match_token",
+            "unknown_campaign",
+            "widget_token_required",
+            "not_found",
+            "support_upstream_rejected",
+            "support_upstream_unavailable",
+            // Codes the customer app still switches on from the pre-gateway support stack and
+            // from services in front of the gateway. The contract calls codes extensible and the
+            // SDK must not decide which ones are real.
+            "support_gateway_request_failed",
+            "conversation_not_found",
+            "daykeeper_usage_limit_exceeded",
+            "daykeeper_usage_not_enabled",
+            "daykeeper_support_not_ready",
+            "daykeeper_resource_conflict",
+            "daykeeper_support_unavailable",
+            "rate_limited",
+        )
+
+    @Test
+    fun everyGatewayErrorCodeReachesTheCallerUnchanged() = server { server ->
+        assertEquals(28, gatewayErrorCodes.size)
+        assertEquals(gatewayErrorCodes.size, gatewayErrorCodes.toSet().size)
+        val sdk = client(server)
+        for (code in gatewayErrorCodes) {
+            server.enqueue(response("""{"error":"$code"}""", 403))
+            assertEquals(code, failure { sdk.getUnread() }.code)
+            assertTrue(code, DaykeeperException.isSafeCode(code))
+        }
+    }
+
+    @Test
+    fun codeShapeRuleAcceptsOnlyCodeShapedStrings() {
+        for (value in listOf("abc", "not_found", "a1_b2_c3", "a".repeat(64), "ab0")) {
+            assertTrue(value, DaykeeperException.isSafeCode(value))
+        }
+        for (value in
+            listOf(
+                "ab",
+                "a".repeat(65),
+                "",
+                "Not_Found",
+                "not-found",
+                "not found",
+                " not_found",
+                "not_found" + System.lineSeparator(),
+                "_not_found",
+                "1not_found",
+                "not_found ",
+                "nöt_found",
+            )) {
+            assertFalse(value, DaykeeperException.isSafeCode(value))
+        }
+    }
+
+    @Test
+    fun aCodeTheSdkHasNeverSeenIsStillHandedToTheCaller() = server { server ->
+        // The gateway can ship a new code before the SDK does; that must not become a silent
+        // contract break in the consuming app's switch statement.
+        val sdk = client(server)
+        for (code in listOf("support_brand_new_condition", "invalid_future_claim", "ab0")) {
+            server.enqueue(response("""{"error":"$code"}""", 400))
+            assertEquals(code, failure { sdk.getUnread() }.code)
+        }
+    }
+
+    @Test
+    fun proseAndNonStringErrorValuesCollapse() = server { server ->
+        // server.mjs answers some 4xx failures with `error: <Error.message>` rather than a code.
+        // Those are English sentences and never reach the caller, and neither does a value that
+        // is not a JSON string at all.
+        val sdk = client(server)
+        val bodies =
+            listOf(
+                """{"error":"Payload too large"}""",
+                """{"error":"Invalid JSON"}""",
+                """{"error":"At least one erasure target is required"}""",
+                """{"error":"At most 100 erasure targets are allowed"}""",
+                """{"error":"Each erasure target needs a userId or email"}""",
+                """{"error":"Message content is required"}""",
+                """{"error":"Conversation not found"}""",
+                """{"error":["support_upstream_rejected"]}""",
+                """{"error":{"code":"support_upstream_rejected"}}""",
+                """{"error":42}""",
+                """{"error":true}""",
+                """{"error":null}""",
+            )
+        for (body in bodies) {
+            server.enqueue(response(body, 400))
+            val error = failure { sdk.getUnread() }
+            assertEquals(body, "daykeeper_request_failed", error.code)
+            assertEquals("daykeeper_request_failed", error.message)
+        }
+    }
+
+    @Test
+    fun theContractMessageFieldNeverBecomesTheErrorMessage() = server { server ->
+        val prose = "You have used your included conversations for August."
+        server.enqueue(
+            response(
+                """{"error":"daykeeper_usage_limit_exceeded","message":"$prose",""" +
+                    """"retryable":false,"nextAction":"review_usage"}""",
+                429,
+            )
+        )
+        val error = failure { client(server).getUnread() }
+        assertEquals("daykeeper_usage_limit_exceeded", error.code)
+        assertEquals("daykeeper_usage_limit_exceeded", error.message)
+        // Honor an explicit server veto: a 429 is not automatically retryable when the server
+        // says not to replay it.
+        assertFalse(error.retryable)
+        assertEquals(DaykeeperNextAction.REVIEW_USAGE, error.nextAction)
+        assertFalse(error.toString().contains("August"))
+    }
+
+    @Test
+    fun nextActionIsProjectedThroughAClosedAllowlist() = server { server ->
+        val sdk = client(server)
+        for (action in DaykeeperNextAction.entries) {
+            server.enqueue(
+                response(
+                    """{"error":"daykeeper_usage_limit_exceeded","nextAction":"${action.raw}"}""",
+                    429,
+                )
+            )
+            assertEquals(action, failure { sdk.getUnread() }.nextAction)
+        }
+    }
+
+    @Test
+    fun anUnrecognizedOrAbsentNextActionIsDropped() = server { server ->
+        // Unlike a code, a next action is an instruction the app acts on, so the vocabulary stays
+        // closed: an unknown hint is dropped, not surfaced.
+        val sdk = client(server)
+        val values =
+            listOf(
+                "\"review_billing\"",
+                "\"contact_support\"",
+                "\"Review_Usage\"",
+                "\"review usage\"",
+                "\"\"",
+                "[\"review_usage\"]",
+                "42",
+                "true",
+                "null",
+            )
+        for (value in values) {
+            server.enqueue(
+                response(
+                    """{"error":"daykeeper_usage_limit_exceeded","nextAction":$value}""",
+                    429,
+                )
+            )
+            val error = failure { sdk.getUnread() }
+            assertNull(value, error.nextAction)
+            assertEquals("daykeeper_usage_limit_exceeded", error.code)
+        }
+        server.enqueue(response("""{"error":"not_found"}""", 404))
+        assertNull(failure { sdk.getUnread() }.nextAction)
+    }
 }
