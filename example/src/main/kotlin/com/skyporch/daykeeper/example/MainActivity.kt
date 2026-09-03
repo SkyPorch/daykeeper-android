@@ -87,6 +87,9 @@ private class DemoClient : DaykeeperCustomerClient {
             "Demo",
         )
 
+    // The offline demo has no credential to refresh, so both reads are the same.
+    override suspend fun getIdentityWithFreshToken() = getIdentity()
+
     override suspend fun listConversations() = DaykeeperConversationList(threads.toList(), null)
 
     override suspend fun createConversation(): DaykeeperConversationResult {

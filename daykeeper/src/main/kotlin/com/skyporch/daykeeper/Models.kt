@@ -129,6 +129,14 @@ fun interface DaykeeperTokenProvider {
 interface DaykeeperCustomerClient {
     suspend fun getIdentity(): DaykeeperCustomerIdentity
 
+    /**
+     * Identity read that always asks the token provider for a fresh credential first, whatever the
+     * previous response advised. It exists so a caller can tell an expired token apart from a
+     * revoked customer without depending on the ordinary 401 retry, which a `retryable: false` hint
+     * suppresses. It is a read: nothing is ever replayed.
+     */
+    suspend fun getIdentityWithFreshToken(): DaykeeperCustomerIdentity
+
     suspend fun listConversations(): DaykeeperConversationList
 
     suspend fun createConversation(): DaykeeperConversationResult

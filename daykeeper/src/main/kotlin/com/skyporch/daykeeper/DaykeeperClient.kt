@@ -108,6 +108,9 @@ internal constructor(
 
     override suspend fun getIdentity(): DaykeeperCustomerIdentity = request("/v1/identity")
 
+    override suspend fun getIdentityWithFreshToken(): DaykeeperCustomerIdentity =
+        request("/v1/identity", forceRefresh = true)
+
     override suspend fun listConversations(): DaykeeperConversationList =
         request<DaykeeperConversationList>("/v1/conversations").also {
             conversations(it.conversations)
@@ -202,6 +205,7 @@ internal constructor(
         path: String,
         write: Boolean = false,
         body: String = "",
+        forceRefresh: Boolean = false,
         crossinline validate: (T) -> Unit = {},
     ): T {
         currentCoroutineContext().ensureActive()
@@ -212,11 +216,13 @@ internal constructor(
         // killed.
         val workerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val worker = workerScope.async {
-            repeat(if (write) 1 else 2) { attempt ->
+            // A forced-refresh read already carries a new credential, so it gets one
+            // attempt like a write rather than a refresh-and-retry pair.
+            repeat(if (write || forceRefresh) 1 else 2) { attempt ->
                 currentCoroutineContext().ensureActive()
                 val token =
                     try {
-                        tokenProvider.token(attempt == 1)
+                        tokenProvider.token(forceRefresh || attempt == 1)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (_: Exception) {
