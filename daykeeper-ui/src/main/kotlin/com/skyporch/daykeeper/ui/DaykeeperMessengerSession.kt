@@ -30,8 +30,6 @@ data class DaykeeperMessengerState(
     val uncertainCreation: Boolean = false,
     /** A fresh post-failure read completed; the user must still explicitly review and confirm. */
     val recoveryReady: Boolean = false,
-    /** A thread is open and at least one page of history is loaded. */
-    val canLoadEarlier: Boolean = false,
 )
 
 /**
@@ -53,6 +51,25 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     private var revision = 0L
     private var job: Job? = null
     private var write: String? = null
+    /**
+     * Messages already loaded per conversation for this session, so returning to a thread restores
+     * what was on screen and the next refresh can be cursored instead of re-reading the whole
+     * conversation. Cleared on suspend and reset along with everything else the customer saw.
+     */
+    private val threadHistory = mutableMapOf<Long, List<DaykeeperMessage>>()
+    /**
+     * Subject and identifier the customer token resolved to the first time this session read
+     * identity. A later read naming anyone else means the host swapped customers underneath us.
+     */
+    private var identitySubject: String? = null
+    private var identityIdentifier: String? = null
+    /**
+     * `revision` counts operations, so a session generation is tracked separately: it changes when
+     * the session is cancelled, suspended or reset. One read-marker recovery per generation is
+     * enough, and a repeatedly rejected marker must not ask the host for a token on every tap.
+     */
+    private var generation = 0L
+    private var markerRecoveryGeneration: Long? = null
 
     fun resume() {
         main()
@@ -66,6 +83,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         if (state.value.suspended) return
         cancelOperation()
         reviewedUncertain.clear()
+        threadHistory.clear()
         creationReviewed = false
         mutableState.value = DaykeeperMessengerState(suspended = true)
     }
@@ -73,12 +91,17 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     fun reset() {
         main()
         revision++
+        generation++
         job?.cancel()
         scope.cancel()
         client = null
         drafts.clear()
         uncertain.clear()
         reviewedUncertain.clear()
+        threadHistory.clear()
+        identitySubject = null
+        identityIdentifier = null
+        markerRecoveryGeneration = null
         selected = null
         creationUncertain = false
         creationReviewed = false
@@ -106,7 +129,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         main()
         if (!usable() || state.value.busy || state.value.conversations.none { it.id == id }) return
         selected = id
-        mutableState.value = snapshot(state.value.conversations)
+        mutableState.value = snapshot(state.value.conversations, threadHistory[id].orEmpty())
         refresh()
     }
 
@@ -172,22 +195,6 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         }
     }
 
-    /**
-     * Ask the gateway for the conversation's default window again and fold in anything this client
-     * does not already hold. The customer contract exposes only a forward `after` cursor, so this is
-     * the widest backward request the SDK can make. It never drops loaded history and never writes.
-     */
-    fun loadEarlierMessages() {
-        main()
-        val id = selected ?: return
-        if (!state.value.canLoadEarlier) return
-        operate {
-            val page = it.listMessages(id, null).messages
-            currentCoroutineContext().ensureActive()
-            snapshot(state.value.conversations, merge(state.value.messages, page))
-        }
-    }
-
     /** After reading refreshed history, discard the uncertain draft; this never sends a message. */
     fun discardUncertainDraft() {
         main()
@@ -221,7 +228,12 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         job = scope.launch {
             try {
                 val result = block(activeClient)
-                if (revision == current) mutableState.value = result
+                if (revision == current) {
+                    selected?.let { id ->
+                        if (result.messages.isNotEmpty()) threadHistory[id] = result.messages
+                    }
+                    mutableState.value = result
+                }
             } catch (error: Exception) {
                 if (revision != current) return@launch
                 val safe = error as? DaykeeperException
@@ -234,21 +246,34 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
                     }
                     // A write may have been accepted before the token expired. Do not throw the
                     // draft and the history away on the first rejection: ask for one fresh token
-                    // and prove the customer is still signed in with a read. The write itself is
-                    // never resent.
-                    val stillSignedIn =
-                        try {
-                            activeClient.getIdentity()
-                            true
-                        } catch (_: Exception) {
-                            false
+                    // and prove the same customer is still signed in. The write is never resent.
+                    val alreadyConfirmed =
+                        kind == "seen" && markerRecoveryGeneration == generation
+                    if (!alreadyConfirmed) {
+                        if (kind == "seen") markerRecoveryGeneration = generation
+                        when (confirmSession(activeClient)) {
+                            Recovery.SIGNED_OUT -> {
+                                reset()
+                                return@launch
+                            }
+                            Recovery.UNAVAILABLE -> {
+                                // The recovery read failed for a reason that says nothing about
+                                // the credential: a dropped connection, a 500, a timeout. Treat
+                                // it as an ordinary failure and keep the draft and history.
+                                if (safe.outcomeUnknown) markUncertain()
+                                mutableState.value =
+                                    snapshot(state.value.conversations, state.value.messages)
+                                        .copy(errorCode = safe.code)
+                                return@launch
+                            }
+                            Recovery.SIGNED_IN -> Unit
                         }
-                    if (revision != current) return@launch
-                    if (!stillSignedIn) {
-                        reset()
-                        return@launch
+                        if (revision != current) return@launch
                     }
-                    markUncertain()
+                    // A 4xx rejection is a definite refusal: the gateway did not accept the
+                    // write, so the draft stays editable and only the message changes.
+                    // Uncertainty is reserved for outcomes the client genuinely cannot know.
+                    if (safe.outcomeUnknown) markUncertain()
                     mutableState.value =
                         snapshot(state.value.conversations, state.value.messages)
                             .copy(errorCode = safe.code)
@@ -267,8 +292,45 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         }
     }
 
+    private enum class Recovery {
+        /** A fresh credential works and names the same customer. */
+        SIGNED_IN,
+        /** The gateway rejected the fresh credential, or it named a different customer. */
+        SIGNED_OUT,
+        /** The recovery read failed for a reason unrelated to the credential. */
+        UNAVAILABLE,
+    }
+
+    /**
+     * One recovery attempt, always asking the host for a fresh token rather than relying on the
+     * ordinary 401 retry, which the gateway can suppress with a `retryable: false` hint. Only an
+     * authorization rejection or a different customer signs the session out; every other failure
+     * leaves the draft and history alone.
+     */
+    private suspend fun confirmSession(activeClient: DaykeeperCustomerClient): Recovery {
+        val identity =
+            try {
+                activeClient.getIdentityWithFreshToken()
+            } catch (error: Exception) {
+                val status = (error as? DaykeeperException)?.status
+                return if (status == 401 || status == 403) Recovery.SIGNED_OUT
+                else Recovery.UNAVAILABLE
+            }
+        val subject = identitySubject
+        val identifier = identityIdentifier
+        if (subject == null || identifier == null) {
+            identitySubject = identity.subject
+            identityIdentifier = identity.identifier
+            return Recovery.SIGNED_IN
+        }
+        return if (subject == identity.subject && identifier == identity.identifier)
+            Recovery.SIGNED_IN
+        else Recovery.SIGNED_OUT
+    }
+
     private fun cancelOperation() {
         revision++
+        generation++
         markUncertain()
         write = null
         job?.cancel()
@@ -307,7 +369,6 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             uncertainMessage = selected in uncertain,
             uncertainCreation = creationUncertain,
             recoveryReady = selected?.let { it in reviewedUncertain } ?: creationReviewed,
-            canLoadEarlier = selected != null && messages.isNotEmpty(),
         )
 
     private fun usable() = client != null && !state.value.suspended
