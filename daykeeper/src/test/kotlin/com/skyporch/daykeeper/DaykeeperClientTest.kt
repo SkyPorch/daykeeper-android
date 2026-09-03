@@ -410,20 +410,17 @@ class DaykeeperClientTest {
         assertEquals("INVALID_RESPONSE", failure { client(server).listConversations() }.code)
     }
 
+    // JVM unit tests always compile the debug variant, so BuildConfig.DEBUG is true here and the
+    // release branch of the constructor wiring is not reachable from this suite. The test drives
+    // the flag the constructor reads instead, which is the same decision the wiring makes.
     @Test
-    fun plainLoopbackIsRefusedWhenTheHostAppIsNotADebugBuild() = server { server ->
+    fun plainLoopbackIsAcceptedOnlyWhenTheLoopbackFlagIsSet() = server { server ->
         val url = server.url("/gateway/").toString()
         val provider = DaykeeperTokenProvider { "synthetic-customer" }
-        // Debug builds keep the local-fixture convenience.
         DaykeeperClient(url, provider, 30_000, true)
-        for (release in listOf(false)) {
-            try {
-                DaykeeperClient(url, provider, 30_000, release)
-                fail("Expected a release build to refuse plain HTTP")
-            } catch (error: DaykeeperException) {
-                assertEquals("INVALID_CONFIGURATION", error.code)
-            }
-        }
+        val error =
+            failure { DaykeeperClient(url, provider, 30_000, false) as Any }
+        assertEquals("INVALID_CONFIGURATION", error.code)
     }
 
     @Test
@@ -432,5 +429,27 @@ class DaykeeperClientTest {
         client(server).listMessages(7, 4)
         val request = server.takeRequest()
         assertEquals("/gateway/v1/conversations/7/messages?after=4", request.path)
+    }
+
+    @Test
+    fun forcedRefreshIdentityReadIgnoresANonRetryableExpiredTokenHint() = server { server ->
+        val tokens = mutableListOf<Boolean>()
+        val provider = DaykeeperTokenProvider { force ->
+            tokens.add(force)
+            if (force) "fresh" else "stale"
+        }
+        // The gateway rejects the credential and forbids the ordinary refresh-and-retry.
+        server.enqueue(
+            response("""{"error":"expired_token","retryable":false}""", 401)
+        )
+        val sdk = client(server, provider = provider)
+        assertEquals(401, failure { sdk.getIdentity() }.status)
+        assertEquals("The suppressed retry must not refresh", listOf(false), tokens)
+        // The recovery read asks for a fresh credential whatever the hint said.
+        server.enqueue(response(identity))
+        assertEquals("one", sdk.getIdentityWithFreshToken().subject)
+        assertEquals(listOf(false, true), tokens)
+        server.takeRequest()
+        assertEquals("Bearer fresh", server.takeRequest().getHeader("Authorization"))
     }
 }
