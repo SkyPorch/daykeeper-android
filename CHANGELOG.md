@@ -29,6 +29,15 @@
   synchronous `DiffUtil` pass instead of rebuilding every row, and detach the
   adapter on stop so lifecycle redaction takes effect immediately.
 - Move every user-facing string into `res/values/strings.xml`.
+- Project gateway error codes by shape (`^[a-z][a-z0-9_]{2,63}$`) instead of a
+  23-entry allowlist, matching the web and React Native SDKs. Codes the gateway
+  adds without an SDK release — `widget_token_required`, `conversation_not_found`,
+  `support_gateway_request_failed` and the rest — now reach the caller unchanged;
+  free-form prose, non-code-shaped tokens and non-string values still collapse to
+  `daykeeper_request_failed`, and the envelope's `message` is never read.
+- Expose `DaykeeperException.nextAction` as `DaykeeperNextAction`, decoded from
+  the envelope through a closed three-value allowlist (`REVIEW_USAGE`,
+  `REVIEW_SETUP`, `REFRESH_CONVERSATION`); anything else is dropped.
 
 - Add exact-version Maven Central candidate metadata, source/Javadoc artifacts,
   embedded-license and checksum validation, with registry upload kept outside CI.
