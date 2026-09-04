@@ -18,3 +18,6 @@ The local verification repository is not a remote release. Build an exact Maven
 candidate with `-PdaykeeperVersion=MAJOR.MINOR.PATCH`, then run
 `bash Scripts/check-maven-candidate.sh MAJOR.MINOR.PATCH`. Never provide registry
 or signing credentials to a pull-request job.
+
+Keep the repository publishable: examples, fixtures, and documentation must not
+name downstream products, consuming applications, or their hostnames.

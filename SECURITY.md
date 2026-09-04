@@ -32,3 +32,11 @@ state contain customer data and are not safe diagnostic objects. A host that
 replaces `DaykeeperCustomerClient` owns that implementation's trust boundary.
 Do not persist tokens, transcripts or drafts without an explicit product/privacy
 decision. See [PRIVACY.md](PRIVACY.md) for host integration requirements.
+
+## Coordinated disclosure
+
+Please give maintainers a chance to ship a fix before publishing details,
+and tell us when you intend to publish so a fix and an advisory can be
+prepared alongside it. Reporters who want credit in the advisory should say
+so in the report. No response time is promised while this candidate is
+unreleased; see the statement above.
