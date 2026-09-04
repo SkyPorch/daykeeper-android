@@ -46,6 +46,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - name: Install compile platform
         run: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Verify contract snapshot
