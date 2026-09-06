@@ -279,6 +279,7 @@ internal constructor(
                             ?: "daykeeper_request_failed",
                         wire.status,
                         !write &&
+                            code != "widget_unavailable" &&
                             (retryHint
                                 ?: (wire.status == 408 ||
                                     wire.status == 429 ||
