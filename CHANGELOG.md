@@ -21,6 +21,8 @@
 - Accept any non-empty conversation status and expose it as
   `DaykeeperConversationStatus`, with `Unknown(raw)` for a status added after this
   release; one unfamiliar status no longer rejects the whole list.
+- Document API-only inbox refusal for widget identity and anonymous-conversation
+  claims, preserving the native messenger as a separate channel.
 - Refuse plain HTTP in release builds, including loopback. `DaykeeperClient` now
   has an internal primary constructor carrying that decision and a public
   `@JvmOverloads` secondary constructor with the previous parameters and default
@@ -29,12 +31,11 @@
   synchronous `DiffUtil` pass instead of rebuilding every row, and detach the
   adapter on stop so lifecycle redaction takes effect immediately.
 - Move every user-facing string into `res/values/strings.xml`.
-- Project gateway error codes by shape (`^[a-z][a-z0-9_]{2,63}$`) instead of a
-  23-entry allowlist, matching the web and React Native SDKs. Codes the gateway
-  adds without an SDK release — `widget_token_required`, `conversation_not_found`,
-  `support_gateway_request_failed` and the rest — now reach the caller unchanged;
-  free-form prose, non-code-shaped tokens and non-string values still collapse to
-  `daykeeper_request_failed`, and the envelope's `message` is never read.
+- Project only documented gateway error codes, including `widget_unavailable`,
+  across the SDK boundary. Unknown future codes and token-like strings collapse
+  to `daykeeper_request_failed`; this is the compatibility boundary that keeps
+  arbitrary server data out of client-visible diagnostics. The envelope's
+  `message` is never read.
 - Expose `DaykeeperException.nextAction` as `DaykeeperNextAction`, decoded from
   the envelope through a closed three-value allowlist (`REVIEW_USAGE`,
   `REVIEW_SETUP`, `REFRESH_CONVERSATION`); anything else is dropped.

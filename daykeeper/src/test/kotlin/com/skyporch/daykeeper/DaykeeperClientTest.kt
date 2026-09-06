@@ -156,6 +156,31 @@ class DaykeeperClientTest {
     }
 
     @Test
+    fun apiOnlyIdentityRefusalIsSafeAndNeverRetried() = server { server ->
+        server.enqueue(response("""{"error":"widget_unavailable","retryable":true,"detail":"private backend"}""", 409))
+        val error = failure { client(server).getIdentity() }
+        assertEquals("widget_unavailable", error.code)
+        assertEquals(409, error.status)
+        assertFalse(error.retryable)
+        assertFalse(error.outcomeUnknown)
+        assertFalse(error.toString().contains("private backend"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun apiOnlyClaimRefusalIsSafeAndDoesNotReplayWrite() = server { server ->
+        server.enqueue(response("""{"error":"widget_unavailable","detail":"private backend"}""", 409))
+        val error = failure { client(server).claimAnonymousConversation("widget") }
+        assertEquals("widget_unavailable", error.code)
+        assertEquals(409, error.status)
+        assertFalse(error.retryable)
+        assertFalse(error.outcomeUnknown)
+        assertFalse(error.toString().contains("private backend"))
+        assertEquals(1, server.requestCount)
+        assertEquals("POST", server.takeRequest().method)
+    }
+
+    @Test
     fun allWritesAreSingleShotAcrossAuthTimeoutQuotaAndServerFailures() = server { server ->
         val sdk = client(server)
         val writes: List<suspend () -> Any> =
@@ -454,10 +479,10 @@ class DaykeeperClientTest {
     }
 
     /**
-     * Every error code the Daykeeper support gateway can put in the customer `{ "error": ... }`
-     * envelope, copied from `test/errorCodes.test.ts` in SkyPorch/daykeeper-react-native#14 so the
-     * three SDKs agree on exactly one projection rule. Consuming apps switch on these, so every
-     * one must arrive unchanged.
+     * Every error code in the Android customer-gateway compatibility vocabulary that can cross the
+     * customer `{ "error": ... }` envelope. The final entries preserve codes used by older native
+     * gateways; newer cross-platform clients may intentionally expose a narrower current list.
+     * Consuming Android apps switch on these, so every one must arrive unchanged.
      */
     private val gatewayErrorCodes =
         listOf(
@@ -494,11 +519,12 @@ class DaykeeperClientTest {
             "daykeeper_resource_conflict",
             "daykeeper_support_unavailable",
             "rate_limited",
+            "widget_unavailable",
         )
 
     @Test
     fun everyGatewayErrorCodeReachesTheCallerUnchanged() = server { server ->
-        assertEquals(28, gatewayErrorCodes.size)
+        assertEquals(29, gatewayErrorCodes.size)
         assertEquals(gatewayErrorCodes.size, gatewayErrorCodes.toSet().size)
         val sdk = client(server)
         for (code in gatewayErrorCodes) {
@@ -509,37 +535,30 @@ class DaykeeperClientTest {
     }
 
     @Test
-    fun codeShapeRuleAcceptsOnlyCodeShapedStrings() {
-        for (value in listOf("abc", "not_found", "a1_b2_c3", "a".repeat(64), "ab0")) {
+    fun knownCodeAllowlistAcceptsCurrentAndLegacyCodesOnly() {
+        for (value in listOf("not_found", "widget_unavailable", "rate_limited")) {
             assertTrue(value, DaykeeperException.isSafeCode(value))
         }
         for (value in
             listOf(
-                "ab",
-                "a".repeat(65),
+                "abc",
+                "sk_live_123456789",
                 "",
-                "Not_Found",
-                "not-found",
-                "not found",
-                " not_found",
-                "not_found" + System.lineSeparator(),
-                "_not_found",
-                "1not_found",
-                "not_found ",
-                "nöt_found",
+                "support_brand_new_condition",
             )) {
             assertFalse(value, DaykeeperException.isSafeCode(value))
         }
     }
 
     @Test
-    fun aCodeTheSdkHasNeverSeenIsStillHandedToTheCaller() = server { server ->
-        // The gateway can ship a new code before the SDK does; that must not become a silent
-        // contract break in the consuming app's switch statement.
+    fun unknownFutureAndTokenLikeCodesAreRedacted() = server { server ->
         val sdk = client(server)
-        for (code in listOf("support_brand_new_condition", "invalid_future_claim", "ab0")) {
-            server.enqueue(response("""{"error":"$code"}""", 400))
-            assertEquals(code, failure { sdk.getUnread() }.code)
+        for (code in listOf("support_brand_new_condition", "sk_live_123456789")) {
+            server.enqueue(response("""{"error":"$code","message":"private details"}""", 400))
+            val error = failure { sdk.getUnread() }
+            assertEquals("daykeeper_request_failed", error.code)
+            assertFalse(error.toString().contains(code))
+            assertFalse(error.toString().contains("private details"))
         }
     }
 
