@@ -238,10 +238,10 @@ export async function runInstrumentation(run, serial, log = console.log) {
         "--no-daemon",
         "--console=plain",
         "--stacktrace",
-        "--serial",
-        serial,
       ],
       {
+        // AGP 9.2.1 mutates its immutable --serial list in getFilteredDevices.
+        // Its ConnectedDeviceProvider supports exact selection via this env var.
         env: { ...process.env, ANDROID_SERIAL: serial },
         timeout: 1_200_000,
         maxBuffer: 16 * 1024 * 1024,

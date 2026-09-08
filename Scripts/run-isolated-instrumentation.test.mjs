@@ -29,7 +29,7 @@ for (const failure of [false, true])
     const run = async (command, args, settings) => {
       assert.equal(command, "./gradlew");
       assert(args.includes("--stacktrace"));
-      assert.equal(args[args.indexOf("--serial") + 1], "emulator-5554");
+      assert(!args.includes("--serial"));
       assert.equal(settings.env.ANDROID_SERIAL, "emulator-5554");
       assert.equal(settings.timeout, 1_200_000);
       if (failure) throw output;
