@@ -148,5 +148,23 @@ uses no production credentials and sends no network requests. On an explicitly
 authorized, isolated test device, run `:example:connectedDebugAndroidTest`.
 Never point tests at a user's device or production gateway by default.
 
+For an authorized local runtime check, `Scripts/run-isolated-instrumentation.mjs`
+is dry-run by default. It fails closed when the command-line tools, API 36 image,
+or disk budget are unavailable. Pass `--execute` only after review; it creates a
+uniquely named AVD, verifies its exact emulator serial and AVD identity, runs
+`connectedDebugAndroidTest --serial`, preserves the report, and deletes only the
+verified AVD. It never selects an existing AVD.
+
+```sh
+# Requires Node 22+, installed SDK command-line tools, and 8 GiB free space.
+node Scripts/run-isolated-instrumentation.mjs --image 'system-images;android-36;google_apis_playstore;arm64-v8a'
+# Once preflight passes and this test run is authorized, add --execute.
+node --test Scripts/run-isolated-instrumentation.test.mjs
+```
+
+This runner does not download SDK tools or images. Its mocked tests run in CI;
+they do not certify Android runtime behavior. Runtime reports stay in ignored
+`TestResults/`. Review those reports before claiming device compatibility.
+
 The [contract snapshot](openapi/SOURCE.md) is Apache-2.0; SDK source is [MIT](LICENSE).
 Dependency licenses remain applicable. See [contributing](CONTRIBUTING.md).
