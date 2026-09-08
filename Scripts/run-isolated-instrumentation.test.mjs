@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import { withTerminationSignals } from "./run-isolated-instrumentation.mjs";
 import {
   choosePort,
   runIsolated,
@@ -154,7 +155,12 @@ test("owned child termination escalates and is bounded", async () => {
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
 });
 
-for (const scenario of ["wrong-identity", "failed-tests"])
+for (const scenario of [
+  "wrong-identity",
+  "failed-tests",
+  "create-failure",
+  "signal",
+])
   test(`isolated orchestration: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), "daykeeper-harness-test-"));
     await Promise.all([
@@ -176,7 +182,8 @@ for (const scenario of ["wrong-identity", "failed-tests"])
     let ownedHome = "";
     let serial = "";
     const reports = [];
-    const run = async (command, args) => {
+    const host = new EventEmitter();
+    const run = async (command, args, settings) => {
       calls.push([command, args]);
       if (command === "df")
         return {
@@ -198,6 +205,10 @@ for (const scenario of ["wrong-identity", "failed-tests"])
       if (args.includes("sys.boot_completed")) return { stdout: "1\n" };
       if (args[0] === "devices")
         return { stdout: `List of devices attached\n${serial}\tdevice\n` };
+      if (command === "./gradlew" && scenario === "signal") {
+        host.emit("SIGTERM");
+        settings.signal.throwIfAborted();
+      }
       if (command === "./gradlew")
         throw new Error("synthetic instrumentation failure");
       if (args[0] === "wait-for-device") return { stdout: "" };
@@ -211,6 +222,8 @@ for (const scenario of ["wrong-identity", "failed-tests"])
     const create = async (_command, args, env) => {
       ownedName = args[args.indexOf("--name") + 1];
       ownedHome = env.ANDROID_AVD_HOME;
+      if (scenario === "create-failure")
+        throw new Error("synthetic create failure");
       return { stdout: "" };
     };
     const start = (_command, args) => {
@@ -218,24 +231,38 @@ for (const scenario of ["wrong-identity", "failed-tests"])
       return child;
     };
     await assert.rejects(
-      runIsolated(
-        { execute: true, sdkRoot: root },
-        run,
-        start,
-        create,
-        async (name) => reports.push(name),
+      withTerminationSignals(
+        (signal) =>
+          runIsolated(
+            { execute: true, sdkRoot: root, signal },
+            run,
+            start,
+            create,
+            async (name) => reports.push(name),
+          ),
+        host,
       ),
       scenario === "wrong-identity"
         ? /foreign AVD/
-        : /synthetic instrumentation failure/,
+        : scenario === "create-failure"
+          ? /synthetic create failure/
+          : scenario === "signal"
+            ? /Interrupted by SIGTERM/
+            : /synthetic instrumentation failure/,
     );
     assert.equal(
       calls.some(
         ([, args]) => args[0] === ":example:connectedDebugAndroidTest",
       ),
-      scenario === "failed-tests",
+      ["failed-tests", "signal"].includes(scenario),
     );
-    assert.deepEqual(reports, scenario === "failed-tests" ? [ownedName] : []);
+    assert.deepEqual(
+      reports,
+      ["failed-tests", "signal"].includes(scenario) ? [ownedName] : [],
+    );
+    assert.equal(host.listenerCount("SIGTERM"), 0);
+    assert.equal(host.listenerCount("SIGINT"), 0);
+    await assert.rejects(access(ownedHome), { code: "ENOENT" });
     assert(
       !calls.some(([, args]) => args.includes("emu") && args.includes("kill")),
     );

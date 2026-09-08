@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { access, cp, mkdir, mkdtemp } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, rm, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, basename, resolve } from "node:path";
 import { promisify } from "node:util";
 import { createServer } from "node:net";
 
@@ -76,21 +76,25 @@ export async function terminateOwnChild(child, graceMs = 5000) {
     clearTimeout(timer);
   }
 }
-function createAvd(command, args, env) {
+function createAvd(command, args, env, signal) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "inherit"],
       env,
+      signal,
     });
     let stdout = "";
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.once("error", reject);
+    let processError;
+    child.once("error", (error) => {
+      processError = error;
+    });
     child.once("close", (code) =>
-      code === 0
+      code === 0 && !processError
         ? resolve({ stdout })
-        : reject(new Error(`avdmanager create exited ${code}`)),
+        : reject(processError || new Error(`avdmanager create exited ${code}`)),
     );
     child.stdin.end("no\n");
   });
@@ -155,10 +159,10 @@ export async function preflight({ sdkRoot, image = IMAGE }, run = exec) {
 }
 
 export async function cleanupOwnedAvd(
-  { avdmanager, name, avdHome, env, created },
+  { avdmanager, name, avdHome, env, created, removeHome = false },
   run = exec,
 ) {
-  if (!created) return;
+  if (!created && !removeHome) return;
   const ownedEnv = env || { ...process.env, ANDROID_AVD_HOME: avdHome };
   assert.equal(
     ownedEnv.ANDROID_AVD_HOME,
@@ -166,15 +170,33 @@ export async function cleanupOwnedAvd(
     "cleanup environment must match owned AVD home",
   );
   const { stdout } = await run(avdmanager, ["list", "avd"], { env: ownedEnv });
-  assert(
-    new RegExp(`^\\s*Name:\\s*${quote(name)}\\s*$`, "m").test(stdout),
-    "refusing cleanup of an unrecognized AVD",
+  const present = new RegExp(`^\\s*Name:\\s*${quote(name)}\\s*$`, "m").test(
+    stdout,
   );
-  assert(
-    stdout.includes(`${avdHome}/${name}.avd`),
-    "refusing cleanup of an AVD outside the owned home",
-  );
-  await run(avdmanager, ["delete", "avd", "--name", name], { env: ownedEnv });
+  if (present) {
+    assert(
+      stdout.includes(`${avdHome}/${name}.avd`),
+      "refusing cleanup of an AVD outside the owned home",
+    );
+    await run(avdmanager, ["delete", "avd", "--name", name], { env: ownedEnv });
+  } else assert(!created, "refusing cleanup of an unrecognized AVD");
+  if (removeHome) {
+    assert.equal(
+      dirname(avdHome),
+      resolve(tmpdir()),
+      "cleanup must target the isolated temporary parent",
+    );
+    assert(
+      /^daykeeper-avd-[A-Za-z0-9]+$/.test(basename(avdHome)),
+      "cleanup must target a generated AVD home",
+    );
+    const info = await lstat(avdHome);
+    assert(
+      info.isDirectory() && !info.isSymbolicLink(),
+      "cleanup home must be the owned directory",
+    );
+    await rm(avdHome, { recursive: true, force: true });
+  }
 }
 
 async function collectReports(name) {
@@ -193,6 +215,14 @@ export async function runIsolated(
   create = createAvd,
   collect = collectReports,
 ) {
+  const cleanupRun = run;
+  const commandRun = run;
+  run = (command, args, settings = {}) =>
+    commandRun(command, args, {
+      timeout: 120_000,
+      ...settings,
+      signal: options.signal,
+    });
   const plan = await preflight(options, run);
   if (!options.execute) {
     console.log(JSON.stringify({ mode: "dry-run", ...plan }));
@@ -226,6 +256,7 @@ export async function runIsolated(
         "pixel_6",
       ],
       ownedEnv,
+      options.signal,
     );
     created = true;
     child = spawnProcess(
@@ -279,7 +310,11 @@ export async function runIsolated(
         "--serial",
         plan.serial,
       ],
-      { env: { ...process.env, ANDROID_SERIAL: plan.serial } },
+      {
+        env: { ...process.env, ANDROID_SERIAL: plan.serial },
+        timeout: 1_200_000,
+        maxBuffer: 16 * 1024 * 1024,
+      },
     );
   } catch (error) {
     primaryError = error;
@@ -304,8 +339,9 @@ export async function runIsolated(
           ? { ...process.env, ANDROID_AVD_HOME: avdHome }
           : undefined,
         created,
+        removeHome: Boolean(avdHome),
       },
-      run,
+      cleanupRun,
     );
     if (reportError) {
       if (!primaryError) throw reportError;
@@ -316,8 +352,29 @@ export async function runIsolated(
   }
 }
 
+export async function withTerminationSignals(action, host = process) {
+  const controller = new AbortController();
+  const handlers = new Map(
+    ["SIGINT", "SIGTERM"].map((name) => [
+      name,
+      () => {
+        if (!controller.signal.aborted)
+          controller.abort(new Error(`Interrupted by ${name}`));
+      },
+    ]),
+  );
+  for (const [name, handler] of handlers) host.on(name, handler);
+  try {
+    return await action(controller.signal);
+  } finally {
+    for (const [name, handler] of handlers) host.removeListener(name, handler);
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`)
-  runIsolated(parseArgs(process.argv.slice(2))).catch((e) => {
+  withTerminationSignals((signal) =>
+    runIsolated({ ...parseArgs(process.argv.slice(2)), signal }),
+  ).catch((e) => {
     console.error(e.message);
     process.exitCode = 1;
   });
