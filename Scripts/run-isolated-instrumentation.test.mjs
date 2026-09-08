@@ -1,15 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, access, cp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import {
+  prepareReports,
+  collectReports,
+} from "./run-isolated-instrumentation.mjs";
 import { withTerminationSignals } from "./run-isolated-instrumentation.mjs";
 import {
   choosePort,
   runIsolated,
   terminateOwnChild,
 } from "./run-isolated-instrumentation.mjs";
+const execFileAsync = promisify(execFile);
+
+test("CLI guard handles URL-significant entrypoint paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "daykeeper harness #% "));
+  const target = join(directory, "runner #% .mjs");
+  await cp(
+    new URL("./run-isolated-instrumentation.mjs", import.meta.url),
+    target,
+  );
+  await assert.rejects(
+    execFileAsync(process.execPath, [target], {
+      env: {
+        ...process.env,
+        ANDROID_SDK_ROOT: join(directory, "missing"),
+        ANDROID_HOME: "",
+      },
+    }),
+    (error) =>
+      error.code === 1 && /required Android tool is missing/.test(error.stderr),
+  );
+});
 import {
   assertExactSerial,
   assertOwnedAvd,
@@ -134,6 +161,7 @@ test("cleanup discovery and deletion use the same isolated AVD home", async () =
 
 test("startup failure can terminate only the spawned child without adb", async () => {
   const child = new EventEmitter();
+  child.pid = 1234;
   child.exitCode = null;
   child.signalCode = null;
   const signals = [];
@@ -147,6 +175,7 @@ test("startup failure can terminate only the spawned child without adb", async (
 
 test("owned child termination escalates and is bounded", async () => {
   const child = new EventEmitter();
+  child.pid = 1234;
   child.exitCode = null;
   child.signalCode = null;
   const signals = [];
@@ -160,6 +189,7 @@ for (const scenario of [
   "failed-tests",
   "create-failure",
   "signal",
+  "spawn-failure",
 ])
   test(`isolated orchestration: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), "daykeeper-harness-test-"));
@@ -228,6 +258,13 @@ for (const scenario of [
     };
     const start = (_command, args) => {
       serial = `emulator-${args[args.indexOf("-port") + 1]}`;
+      if (scenario === "spawn-failure") {
+        child.pid = undefined;
+        queueMicrotask(() => {
+          child.emit("error", new Error("synthetic spawn failure"));
+          child.emit("close", -1);
+        });
+      }
       return child;
     };
     await assert.rejects(
@@ -239,6 +276,7 @@ for (const scenario of [
             start,
             create,
             async (name) => reports.push(name),
+            async () => {},
           ),
         host,
       ),
@@ -248,7 +286,9 @@ for (const scenario of [
           ? /synthetic create failure/
           : scenario === "signal"
             ? /Interrupted by SIGTERM/
-            : /synthetic instrumentation failure/,
+            : scenario === "spawn-failure"
+              ? /synthetic spawn failure/
+              : /synthetic instrumentation failure/,
     );
     assert.equal(
       calls.some(
@@ -267,3 +307,27 @@ for (const scenario of [
       !calls.some(([, args]) => args.includes("emu") && args.includes("kill")),
     );
   });
+
+test("prior reports cannot become current-run evidence after early Gradle failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "daykeeper-report-test-"));
+  const source = join(root, "example/build/reports/androidTests/connected");
+  await mkdir(source, { recursive: true });
+  await writeFile(join(source, "old-result.html"), "old result");
+  await prepareReports("synthetic-run", root);
+  await collectReports("synthetic-run", root);
+  await access(
+    join(
+      root,
+      "TestResults/android/synthetic-run/previous-run-not-evidence/old-result.html",
+    ),
+  );
+  await assert.rejects(
+    access(
+      join(
+        root,
+        "TestResults/android/synthetic-run/current-run/old-result.html",
+      ),
+    ),
+    { code: "ENOENT" },
+  );
+});

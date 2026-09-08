@@ -1,9 +1,19 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, rm, lstat } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  rm,
+  lstat,
+  rename,
+} from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createServer } from "node:net";
 
@@ -57,7 +67,8 @@ async function probePair(port) {
   }
 }
 export async function terminateOwnChild(child, graceMs = 5000) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null)
+    return;
   let timer;
   const stopped = new Promise((resolve, reject) => {
     child.once("close", resolve);
@@ -199,11 +210,20 @@ export async function cleanupOwnedAvd(
   }
 }
 
-async function collectReports(name) {
-  const destination = `TestResults/android/${name}`;
+export async function prepareReports(name, root = process.cwd()) {
+  const destination = join(root, "TestResults/android", name);
   await mkdir(destination, { recursive: true });
-  if (await exists("example/build/reports/androidTests/connected"))
-    await cp("example/build/reports/androidTests/connected", destination, {
+  const previous = join(root, "example/build/reports/androidTests/connected");
+  if (await exists(previous))
+    await rename(previous, join(destination, "previous-run-not-evidence"));
+}
+
+export async function collectReports(name, root = process.cwd()) {
+  const destination = join(root, "TestResults/android", name, "current-run");
+  await mkdir(destination, { recursive: true });
+  const source = join(root, "example/build/reports/androidTests/connected");
+  if (await exists(source))
+    await cp(source, destination, {
       recursive: true,
     });
 }
@@ -214,6 +234,7 @@ export async function runIsolated(
   spawnProcess = spawn,
   create = createAvd,
   collect = collectReports,
+  prepare = prepareReports,
 ) {
   const cleanupRun = run;
   const commandRun = run;
@@ -274,7 +295,16 @@ export async function runIsolated(
       ],
       { stdio: "ignore", detached: true, env: ownedEnv },
     );
-    assert(child?.pid, "emulator process did not start");
+    assert(child, "emulator spawn returned no process");
+    let spawnError;
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    if (!child.pid) {
+      // A failed asynchronous spawn emits error, then close. Observe both before cleanup.
+      await new Promise((resolve) => child.once("close", resolve));
+      throw spawnError || new Error("emulator process did not start");
+    }
     await run(plan.tools.adb, ["-s", plan.serial, "wait-for-device"], {
       timeout: 120000,
     });
@@ -300,6 +330,8 @@ export async function runIsolated(
     }
     const { stdout: devices } = await run(plan.tools.adb, ["devices"]);
     assertExactSerial(devices, plan.serial);
+    if (spawnError) throw spawnError;
+    await prepare(plan.name);
     testStarted = true;
     await run(
       "./gradlew",
@@ -371,7 +403,12 @@ export async function withTerminationSignals(action, host = process) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`)
+const invokedDirectly =
+  process.argv[1] &&
+  (import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href ||
+    realpathSync(fileURLToPath(import.meta.url)) ===
+      realpathSync(process.argv[1]));
+if (invokedDirectly)
   withTerminationSignals((signal) =>
     runIsolated({ ...parseArgs(process.argv.slice(2)), signal }),
   ).catch((e) => {
