@@ -50,7 +50,7 @@ jobs:
       - name: Install compile platform
         run: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Verify contract snapshot
-        run: echo 'ae75711072950c786d69401301292659ece7f37461cf0621ae4f8a58836b82bd  openapi/customer.yaml' | sha256sum --check
+        run: echo '322158cd5fa5c54a054d701ff64a9c8b07cad477414d7df83ba5a3aa7ee06cc3  openapi/customer.yaml' | sha256sum --check
       - name: Tests, lint, R8 example, instrumentation compilation and local packaging
         run: ./gradlew :daykeeper:testDebugUnitTest :daykeeper-ui:testDebugUnitTest lint :example:assembleRelease :example:assembleDebugAndroidTest publishAllPublicationsToVerificationRepository -PdaykeeperVersion="$DAYKEEPER_CANDIDATE_VERSION" --no-daemon --console=plain
       - name: Exact Maven candidate
