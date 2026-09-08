@@ -139,7 +139,7 @@ export function assertOwnedEmulator(serial, expected, actual) {
 export async function preflight({ sdkRoot, image = IMAGE }, run = exec) {
   assert(sdkRoot, "ANDROID_SDK_ROOT or ANDROID_HOME is required");
   assert(
-    /^system-images;android-(35|36);google_apis(?:_playstore)?;arm64-v8a$/.test(
+    /^system-images;android-(35|36);google_apis(?:_playstore)?;(?:arm64-v8a|x86_64)$/.test(
       image,
     ),
     `unsupported system image: ${image}`,
@@ -293,7 +293,7 @@ export async function runIsolated(
         "-no-snapshot",
         "-wipe-data",
       ],
-      { stdio: "ignore", detached: true, env: ownedEnv },
+      { stdio: ["ignore", "inherit", "inherit"], detached: true, env: ownedEnv },
     );
     assert(child, "emulator spawn returned no process");
     let spawnError;
