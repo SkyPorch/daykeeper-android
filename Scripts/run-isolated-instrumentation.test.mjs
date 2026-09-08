@@ -13,10 +13,33 @@ import {
 import { withTerminationSignals } from "./run-isolated-instrumentation.mjs";
 import {
   choosePort,
+  runInstrumentation,
   runIsolated,
   terminateOwnChild,
 } from "./run-isolated-instrumentation.mjs";
 const execFileAsync = promisify(execFile);
+
+for (const failure of [false, true])
+  test(`Gradle diagnostics preserve both streams on ${failure ? "failure" : "success"}`, async () => {
+    const output = Object.assign(new Error("instrumentation failed"), {
+      stdout: "test task output",
+      stderr: "stack trace output",
+    });
+    const logs = [];
+    const run = async (command, args, settings) => {
+      assert.equal(command, "./gradlew");
+      assert(args.includes("--stacktrace"));
+      assert.equal(args[args.indexOf("--serial") + 1], "emulator-5554");
+      assert.equal(settings.env.ANDROID_SERIAL, "emulator-5554");
+      assert.equal(settings.timeout, 1_200_000);
+      if (failure) throw output;
+      return output;
+    };
+    const result = runInstrumentation(run, "emulator-5554", (text) => logs.push(text));
+    if (failure) await assert.rejects(result, (error) => error === output);
+    else await result;
+    assert.deepEqual(logs, [output.stdout, output.stderr]);
+  });
 
 test("CLI guard handles URL-significant entrypoint paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "daykeeper harness #% "));

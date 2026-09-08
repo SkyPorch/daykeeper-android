@@ -228,6 +228,36 @@ export async function collectReports(name, root = process.cwd()) {
     });
 }
 
+export async function runInstrumentation(run, serial, log = console.log) {
+  let output;
+  try {
+    output = await run(
+      "./gradlew",
+      [
+        ":example:connectedDebugAndroidTest",
+        "--no-daemon",
+        "--console=plain",
+        "--stacktrace",
+        "--serial",
+        serial,
+      ],
+      {
+        env: { ...process.env, ANDROID_SERIAL: serial },
+        timeout: 1_200_000,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+  } catch (error) {
+    output = error;
+    throw error;
+  } finally {
+    // execFile buffers both streams; retain them on success and failure.
+    // Only fixture instrumentation output is logged, never environment values.
+    if (output?.stdout) log(output.stdout);
+    if (output?.stderr) log(output.stderr);
+  }
+}
+
 export async function runIsolated(
   options,
   run = exec,
@@ -333,21 +363,7 @@ export async function runIsolated(
     if (spawnError) throw spawnError;
     await prepare(plan.name);
     testStarted = true;
-    await run(
-      "./gradlew",
-      [
-        ":example:connectedDebugAndroidTest",
-        "--no-daemon",
-        "--console=plain",
-        "--serial",
-        plan.serial,
-      ],
-      {
-        env: { ...process.env, ANDROID_SERIAL: plan.serial },
-        timeout: 1_200_000,
-        maxBuffer: 16 * 1024 * 1024,
-      },
-    );
+    await runInstrumentation(run, plan.serial);
   } catch (error) {
     primaryError = error;
     throw error;
