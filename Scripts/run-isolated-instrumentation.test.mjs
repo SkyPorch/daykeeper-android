@@ -87,6 +87,20 @@ test("invalid preflight cannot create or start an emulator", async () => {
     /required Android tool is missing/,
   );
   assert.equal(mutations, 0);
+  await assert.rejects(
+    runIsolated(
+      {
+        execute: true,
+        sdkRoot: "/nonexistent-daykeeper-sdk",
+        image: "system-images;android-36;google_apis;x86_64",
+      },
+      forbidden,
+      forbidden,
+      forbidden,
+    ),
+    /required Android tool is missing/,
+  );
+  assert.equal(mutations, 0);
 });
 test("ownership guards reject AVD and emulator collisions", () => {
   assertOwnedAvd("Name: another\n", "daykeeper-isolated-new");

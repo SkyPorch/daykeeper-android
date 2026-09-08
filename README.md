@@ -166,5 +166,13 @@ This runner does not download SDK tools or images. Its mocked tests run in CI;
 they do not certify Android runtime behavior. Runtime reports stay in ignored
 `TestResults/`. Review those reports before claiming device compatibility.
 
+When local tooling or disk is unavailable, maintainers can manually dispatch
+`android-instrumentation-manual.yml` from a reviewed revision. It installs the
+API 36 x86_64 image on a disposable Ubuntu runner, grants that runner KVM access,
+and runs the same isolated test command. Logs and reports are uploaded for seven
+days, including on failure. It runs no production traffic and publishes no SDK.
+A workflow definition or a green mocked suite is not Android runtime evidence;
+inspect the dispatched run's instrumentation results before claiming a pass.
+
 The [contract snapshot](openapi/SOURCE.md) is Apache-2.0; SDK source is [MIT](LICENSE).
 Dependency licenses remain applicable. See [contributing](CONTRIBUTING.md).
