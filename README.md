@@ -152,8 +152,8 @@ For an authorized local runtime check, `Scripts/run-isolated-instrumentation.mjs
 is dry-run by default. It fails closed when the command-line tools, API 36 image,
 or disk budget are unavailable. Pass `--execute` only after review; it creates a
 uniquely named AVD, verifies its exact emulator serial and AVD identity, runs
-`connectedDebugAndroidTest --serial`, preserves the report, and deletes only the
-verified AVD. It never selects an existing AVD.
+`connectedDebugAndroidTest` with its exact `ANDROID_SERIAL`, preserves the report,
+and deletes only the verified AVD. It never selects an existing AVD.
 
 ```sh
 # Requires Node 22+, installed SDK command-line tools, and 8 GiB free space.
