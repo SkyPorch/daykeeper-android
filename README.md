@@ -1,5 +1,7 @@
 # Daykeeper for Android
 
+Learn more about Daykeeper at [mydaykeeper.com](https://www.mydaykeeper.com).
+
 Native Android customer support SDKs by SkyPorch: a coroutine customer client and
 an optional native messenger. This is an **unreleased candidate**. No Maven
 Central release or production compatibility certification is available yet.
