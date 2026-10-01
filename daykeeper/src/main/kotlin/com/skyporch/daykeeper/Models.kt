@@ -113,7 +113,12 @@ data class DaykeeperSeenResult(
     val seenMessageId: Long? = null,
 )
 
-@Serializable data class DaykeeperMessageList(val messages: List<DaykeeperMessage>)
+@Serializable
+data class DaykeeperMessageList(
+    val messages: List<DaykeeperMessage>,
+    /** Present when the gateway honored an explicit cursor-pagination request. */
+    val pagination: String? = null,
+)
 
 @Serializable data class DaykeeperMessageResult(val message: DaykeeperMessage)
 
@@ -145,9 +150,17 @@ interface DaykeeperCustomerClient {
 
     suspend fun markConversationSeen(conversationId: Long): DaykeeperSeenResult
 
-    suspend fun listMessages(conversationId: Long, after: Long? = null): DaykeeperMessageList
+    suspend fun listMessages(
+        conversationId: Long,
+        after: Long? = null,
+    ): DaykeeperMessageList
 
     suspend fun sendMessage(conversationId: Long, content: String): DaykeeperMessageResult
 
     suspend fun claimAnonymousConversation(widgetToken: String): DaykeeperClaimConversationResult
+}
+
+/** Optional backward-history capability, separate to preserve existing client implementers. */
+interface DaykeeperOlderMessagesClient {
+    suspend fun listOlderMessages(conversationId: Long, before: Long): DaykeeperMessageList
 }

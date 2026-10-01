@@ -67,13 +67,17 @@ your host's `ViewModel`. Create a `DaykeeperMessengerView(context)` and call
 `bind(session, viewLifecycleOwner)` in a Fragment, or bind to the Activity's
 lifecycle. Use only one bound view per session. See the runnable [example](example).
 
-Message history is read forward with the contract's `after` cursor. Refreshing an
-open thread, and reopening one whose history this session still holds, ask only
-for messages newer than the last one held, so a long conversation is not re-read
-in full. The customer contract has no backward cursor or page-size parameter, so
-the client cannot request an older window; a thread whose first page already
-exceeds the 1 MiB response cap needs a gateway-side page parameter before it can
-be opened.
+Message reads opt into the gateway's marked cursor profile. A gateway that
+ignores the opt-in and returns the legacy envelope is rejected as an invalid
+response; deploy a compatible gateway before enabling this candidate.
+Opening a conversation loads the latest 20 customer-visible messages. The
+messenger's Load older messages control pages backward and stays available
+after a short non-empty page until a request returns no older messages.
+Refreshing an open thread, and reopening one whose history this session still
+holds, ask only for messages newer than the last server-fetched message, so a
+long conversation is not re-read in full. Refresh can be repeated to catch up
+through multiple pages; local send results never advance that history cursor.
+The composer enforces the 16,000 UTF-16-unit API limit while typing.
 
 The messenger is built from platform Android views: a `ScrollView` around a
 `RecyclerView` list with a `ListAdapter` and `DiffUtil`, so a new message rebinds

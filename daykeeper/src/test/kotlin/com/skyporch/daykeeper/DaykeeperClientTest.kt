@@ -68,7 +68,7 @@ class DaykeeperClientTest {
                 """{"conversation":$conversation}""",
                 """{"unreadCount":2,"conversation":$conversation,"conversations":[$conversation]}""",
                 """{"conversationId":7,"seen":true,"seenAt":1,"seenMessageId":9}""",
-                """{"messages":[$message]}""",
+                """{"pagination":"cursor","messages":[$message]}""",
                 """{"message":$message}""",
                 """{"status":"merged","conversations":1}""",
             )
@@ -89,7 +89,7 @@ class DaykeeperClientTest {
                 "conversations",
                 "unread",
                 "conversations/7/seen",
-                "conversations/7/messages?after=8",
+                "conversations/7/messages?pagination=cursor&after=8",
                 "conversations/7/messages",
                 "anonymous-conversations/claim",
             )
@@ -354,7 +354,7 @@ class DaykeeperClientTest {
             assertEquals("INVALID_RESPONSE", error.code)
             assertTrue(error.outcomeUnknown)
         }
-        server.enqueue(response("{\"messages\":[$message,$message]}"))
+        server.enqueue(response("{\"pagination\":\"cursor\",\"messages\":[$message,$message]}"))
         assertEquals("INVALID_RESPONSE", failure { sdk.listMessages(7) }.code)
         server.enqueue(response("{\"conversationId\":8,\"seen\":true,\"seenAt\":1}"))
         assertTrue(failure { sdk.markConversationSeen(7) }.outcomeUnknown)
@@ -425,10 +425,47 @@ class DaykeeperClientTest {
 
     @Test
     fun messageCursorIsSentAsTheAfterQueryParameter() = server { server ->
-        server.enqueue(response("""{"messages":[$message]}"""))
+        server.enqueue(response("""{"pagination":"cursor","messages":[$message]}"""))
         client(server).listMessages(7, 4)
         val request = server.takeRequest()
-        assertEquals("/gateway/v1/conversations/7/messages?after=4", request.path)
+        assertEquals("/gateway/v1/conversations/7/messages?pagination=cursor&after=4", request.path)
+    }
+
+    @Test
+    fun messageBeforeCursorIsSentAsTheBeforeQueryParameter() = server { server ->
+        server.enqueue(response("""{"pagination":"cursor","messages":[$message]}"""))
+        client(server).listOlderMessages(7, before = 10)
+        assertEquals(
+            "/gateway/v1/conversations/7/messages?pagination=cursor&before=10",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun messagePagesMustAdvancePastTheirCursor() = server { server ->
+        val sdk = client(server)
+        server.enqueue(response("""{"pagination":"cursor","messages":[$message]}"""))
+        assertEquals("INVALID_RESPONSE", failure { sdk.listMessages(7, 10) }.code)
+        server.enqueue(response("""{"pagination":"cursor","messages":[$message]}"""))
+        assertEquals("INVALID_RESPONSE", failure { sdk.listOlderMessages(7, 4) }.code)
+    }
+
+    @Test
+    fun cursorModeRejectsLegacyResponseWithoutMarker() = server { server ->
+        server.enqueue(response("""{"messages":[$message]}"""))
+        assertEquals("INVALID_RESPONSE", failure { client(server).listMessages(7) }.code)
+        assertEquals(
+            "/gateway/v1/conversations/7/messages?pagination=cursor",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun messageListRejectsConflictingAndNonPositiveCursors() = server { server ->
+        val sdk = client(server)
+        assertEquals("INVALID_CONFIGURATION", failure { sdk.listMessages(7, 0) }.code)
+        assertEquals("INVALID_CONFIGURATION", failure { sdk.listOlderMessages(7, before = 0) }.code)
+        assertEquals(0, server.requestCount)
     }
 
     @Test

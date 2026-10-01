@@ -13,6 +13,9 @@
     <string name="daykeeper_sign_out">Sign out of support</string>
     <string name="daykeeper_new_conversation">New conversation</string>
     <string name="daykeeper_mark_read">Mark read</string>
+    <string name="daykeeper_load_older">Load older messages</string>
+    <string name="daykeeper_older_messages_loaded">Older messages loaded</string>
+    <string name="daykeeper_no_older_messages">No older messages</string>
     <string name="daykeeper_review_complete">Review complete</string>
     <string name="daykeeper_discard_draft">Discard uncertain draft</string>
     <string name="daykeeper_reviewed_conversations">I reviewed the conversations</string>

@@ -420,6 +420,149 @@ class DaykeeperMessengerTest {
         }
 
     @Test
+    fun uncertainMessageRecoveryDrainsEveryNewerPageBeforeEnablingActions() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            client.messages.addAll((1L..30L).map(::message))
+            session.openConversation(1)
+            advanceUntilIdle()
+            assertEquals((11L..30L).toList(), session.state.value.messages.map { it.id })
+
+            session.setDraft("unconfirmed")
+            client.sendFailure = responseError(500)
+            session.sendMessage()
+            advanceUntilIdle()
+            client.messages.addAll((31L..75L).map(::message))
+            client.pageFailureAfter = 50L
+            client.pageFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            assertFalse(session.state.value.recoveryReady)
+            assertEquals("unconfirmed", session.state.value.draft)
+            val seenBefore = client.seenWrites
+            session.markRead()
+            advanceUntilIdle()
+            assertEquals(
+                "Read markers wait for a complete recovery",
+                seenBefore,
+                client.seenWrites,
+            )
+
+            client.pageFailureAfter = null
+            session.refresh()
+            advanceUntilIdle()
+            assertTrue(session.state.value.recoveryReady)
+            assertEquals((11L..75L).toList(), session.state.value.messages.map { it.id })
+            assertEquals(listOf(null, 30L, 50L, 30L, 50L, 70L, 75L), client.cursors)
+            session.discardUncertainDraft()
+            assertFalse(session.state.value.uncertainMessage)
+            assertEquals(1, client.sends)
+            session.reset()
+        }
+
+    @Test
+    fun forwardRefreshFailureKeepsMarkReadDisabledUntilCatchUp() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            client.messages.addAll((1L..30L).map(::message))
+            session.openConversation(1)
+            advanceUntilIdle()
+            client.messages.addAll((31L..75L).map(::message))
+            client.pageFailureAfter = 50L
+            client.pageFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            assertFalse(session.state.value.messagesCaughtUp)
+            assertEquals((11L..30L).toList(), session.state.value.messages.map { it.id })
+            val seenBefore = client.seenWrites
+            session.markRead()
+            advanceUntilIdle()
+            assertEquals("Read markers wait for complete forward pagination", seenBefore, client.seenWrites)
+
+            client.pageFailureAfter = null
+            session.refresh()
+            advanceUntilIdle()
+            assertTrue(session.state.value.messagesCaughtUp)
+            assertEquals((11L..75L).toList(), session.state.value.messages.map { it.id })
+            session.markRead()
+            advanceUntilIdle()
+            assertEquals(seenBefore + 1, client.seenWrites)
+            session.reset()
+        }
+
+    @Test
+    fun uncertainSendWithoutFetchedCursorMustPageOlderHistoryBeforeRecovery() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(client)
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("Preserve until the full thread is reviewed")
+            client.sendFailure = responseError(500)
+            session.sendMessage()
+            advanceUntilIdle()
+            client.messages.addAll((1L..45L).map(::message))
+            client.olderHistoryFailure = responseError(503)
+            session.refresh()
+            advanceUntilIdle()
+            assertFalse(session.state.value.recoveryReady)
+            session.discardUncertainDraft()
+            assertEquals("Preserve until the full thread is reviewed", session.state.value.draft)
+
+            client.olderHistoryFailure = null
+            session.refresh()
+            advanceUntilIdle()
+            assertTrue(session.state.value.recoveryReady)
+            assertEquals((1L..45L).toList(), session.state.value.messages.map { it.id })
+            assertFalse("Zero is not a valid customer cursor", client.cursors.contains(0L))
+            assertEquals(listOf(26L, 26L, 6L, 1L), client.beforeCursors.filterNotNull())
+            session.discardUncertainDraft()
+            assertEquals("", session.state.value.draft)
+            session.reset()
+        }
+
+    @Test
+    fun uncertainSendWithEmptyHistoryDoesNotRequireOlderMessagesCapability() =
+        runTest(dispatcher) {
+            val client = FakeClient()
+            val session = DaykeeperMessengerSession(CustomerClientWithoutOlderMessages(client))
+            session.resume()
+            advanceUntilIdle()
+            session.createConversation()
+            advanceUntilIdle()
+            session.setDraft("Keep this draft for an empty-thread review")
+            client.sendFailure = responseError(500)
+            session.sendMessage()
+            advanceUntilIdle()
+            assertTrue(session.state.value.uncertainMessage)
+
+            client.sendFailure = null
+            session.refresh()
+            advanceUntilIdle()
+
+            assertTrue(session.state.value.recoveryReady)
+            assertTrue(session.state.value.messagesCaughtUp)
+            assertTrue(session.state.value.messages.isEmpty())
+            assertEquals("Keep this draft for an empty-thread review", session.state.value.draft)
+            assertFalse("Zero is not a valid customer cursor", client.cursors.contains(0L))
+            session.discardUncertainDraft()
+            assertEquals("", session.state.value.draft)
+            session.reset()
+        }
+
+    @Test
     fun uncertainCreationCannotBeAcknowledgedUntilFreshListSucceeds() =
         runTest(dispatcher) {
             val client = FakeClient().apply { createFailure = responseError(503) }
@@ -626,7 +769,7 @@ class DaykeeperMessengerTest {
         }
 
     @Test
-    fun refreshPagesFromTheLastMessageSoAnOversizedThreadStaysReadable() =
+    fun refreshRequestsOnlyMessagesNewerThanTheLastHeldMessage() =
         runTest(dispatcher) {
             val client = FakeClient()
             val session = DaykeeperMessengerSession(client)
@@ -638,8 +781,8 @@ class DaykeeperMessengerTest {
             session.refresh()
             advanceUntilIdle()
             assertEquals(listOf(1L), session.state.value.messages.map { it.id })
-            // The thread has grown past the transport ceiling: reading the whole
-            // conversation in one response would now fail outright.
+            // The conversation has more than one page, but refresh must request
+            // only newer messages rather than replace held history with a page.
             client.uncursoredHistoryFailure = responseError(500)
             client.messages.add(message(2))
             client.cursors.clear()
@@ -649,7 +792,7 @@ class DaykeeperMessengerTest {
             assertEquals(listOf(1L, 2L), session.state.value.messages.map { it.id })
             assertEquals(
                 "Refresh asks only for messages after the last one held",
-                listOf<Long?>(1L),
+                listOf<Long?>(1L, 2L),
                 client.cursors,
             )
             session.reset()
@@ -671,8 +814,8 @@ class DaykeeperMessengerTest {
             session.showConversations()
             advanceUntilIdle()
             assertTrue(session.state.value.messages.isEmpty())
-            // The thread is oversized now, so the uncursored read the old code issued on
-            // reopen would fail and leave the conversation unreadable.
+            // Reopening a thread we already hold must not replace it with only
+            // the latest page.
             client.uncursoredHistoryFailure = responseError(500)
             client.messages.add(message(2))
             client.cursors.clear()
@@ -682,11 +825,77 @@ class DaykeeperMessengerTest {
             assertEquals(listOf(1L, 2L), session.state.value.messages.map { it.id })
             assertEquals(
                 "Reopening a thread we already hold must not re-read it in full",
-                listOf<Long?>(1L),
+                listOf<Long?>(1L, 2L),
                 client.cursors,
             )
             session.reset()
         }
+
+    @Test
+    fun loadOlderMessagesPagesBackUntilAnEmptyPage() = runTest(dispatcher) {
+        val client = FakeClient()
+        val session = DaykeeperMessengerSession(client)
+        session.resume()
+        advanceUntilIdle()
+        session.createConversation()
+        advanceUntilIdle()
+        client.messages.addAll((1L..45L).map(::message))
+
+        session.openConversation(1)
+        advanceUntilIdle()
+        assertEquals((26L..45L).toList(), session.state.value.messages.map { it.id })
+        assertTrue(session.state.value.hasOlderMessages)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals((6L..45L).toList(), session.state.value.messages.map { it.id })
+        assertTrue(session.state.value.hasOlderMessages)
+        assertEquals("older_messages_loaded", session.state.value.historyAnnouncement)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals((1L..45L).toList(), session.state.value.messages.map { it.id })
+        // A short non-empty page is not proof of exhaustion after defensive filtering.
+        assertTrue(session.state.value.hasOlderMessages)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertFalse(session.state.value.hasOlderMessages)
+        assertEquals("no_older_messages", session.state.value.historyAnnouncement)
+        assertEquals(listOf(null, 26L, 6L, 1L), client.beforeCursors)
+        session.reset()
+    }
+
+    @Test
+    fun sentMessageDoesNotLeapfrogAnUnreadAfterPage() = runTest(dispatcher) {
+        val client = FakeClient()
+        val session = DaykeeperMessengerSession(client)
+        session.resume()
+        advanceUntilIdle()
+        session.createConversation()
+        advanceUntilIdle()
+        client.messages.addAll((1L..50L).map(::message))
+
+        session.openConversation(1)
+        advanceUntilIdle()
+        assertEquals((31L..50L).toList(), session.state.value.messages.map { it.id })
+
+        client.messages.addAll((51L..80L).map(::message))
+        session.refresh()
+        advanceUntilIdle()
+            assertEquals((31L..80L).toList(), session.state.value.messages.map { it.id })
+
+        session.setDraft("A new message")
+        session.sendMessage()
+        advanceUntilIdle()
+        assertEquals(81L, session.state.value.messages.last().id)
+
+        session.refresh()
+        advanceUntilIdle()
+        assertEquals((31L..81L).toList(), session.state.value.messages.map { it.id })
+            assertEquals(listOf(null, 50L, 70L, 80L, 80L, 81L), client.cursors)
+        session.reset()
+    }
 
     // Obtain the SDK's real sanitized error through its public API; no internal-constructor bypass.
     private fun responseError(status: Int, code: String = "support_upstream_unavailable") =
@@ -746,7 +955,11 @@ class DaykeeperMessengerTest {
         override val lifecycle = LifecycleRegistry(this)
     }
 
-    private class FakeClient : DaykeeperCustomerClient {
+    private class CustomerClientWithoutOlderMessages(
+        delegate: DaykeeperCustomerClient,
+    ) : DaykeeperCustomerClient by delegate
+
+    private class FakeClient : DaykeeperCustomerClient, DaykeeperOlderMessagesClient {
         var sends = 0
         var creates = 0
         var seenWrites = 0
@@ -760,8 +973,12 @@ class DaykeeperMessengerTest {
         var seenFailure: DaykeeperException? = null
         var identityFailure: DaykeeperException? = null
         var uncursoredHistoryFailure: DaykeeperException? = null
+        var pageFailureAfter: Long? = null
+        var pageFailure: DaykeeperException? = null
+        var olderHistoryFailure: DaykeeperException? = null
         var identityReads = 0
         val cursors = mutableListOf<Long?>()
+        val beforeCursors = mutableListOf<Long?>()
         val threads = mutableListOf<DaykeeperConversation>()
         val messages = mutableListOf<DaykeeperMessage>()
 
@@ -818,12 +1035,25 @@ class DaykeeperMessengerTest {
             after: Long?,
         ): DaykeeperMessageList {
             cursors.add(after)
+            beforeCursors.add(null)
             if (after == null) uncursoredHistoryFailure?.let { throw it }
-            return DaykeeperMessageList(
-                messages.filter {
-                    it.conversationId == conversationId && (after == null || it.id > after)
-                }
-            )
+            if (after == pageFailureAfter) pageFailure?.let { throw it }
+            val matched = messages.filter {
+                it.conversationId == conversationId &&
+                    (after == null || it.id > after)
+            }
+            val page = if (after != null) matched.take(20) else matched.takeLast(20)
+            return DaykeeperMessageList(page)
+        }
+
+        override suspend fun listOlderMessages(
+            conversationId: Long,
+            before: Long,
+        ): DaykeeperMessageList {
+            beforeCursors.add(before)
+            olderHistoryFailure?.let { throw it }
+            val older = messages.filter { it.conversationId == conversationId && it.id < before }
+            return DaykeeperMessageList(older.takeLast(20))
         }
 
         override suspend fun sendMessage(

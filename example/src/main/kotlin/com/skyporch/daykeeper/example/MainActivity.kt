@@ -72,7 +72,7 @@ class DemoViewModel : ViewModel() {
     }
 }
 
-private class DemoClient : DaykeeperCustomerClient {
+private class DemoClient : DaykeeperCustomerClient, DaykeeperOlderMessagesClient {
     private val threads = mutableListOf<DaykeeperConversation>()
     private val messages = mutableListOf<DaykeeperMessage>()
 
@@ -107,7 +107,12 @@ private class DemoClient : DaykeeperCustomerClient {
         DaykeeperMessageList(
             messages.filter {
                 it.conversationId == conversationId && (after == null || it.id > after)
-            }
+            }.let { page -> if (after == null) page.takeLast(20) else page.take(100) }
+        )
+
+    override suspend fun listOlderMessages(conversationId: Long, before: Long) =
+        DaykeeperMessageList(
+            messages.filter { it.conversationId == conversationId && it.id < before }.takeLast(20)
         )
 
     override suspend fun sendMessage(
