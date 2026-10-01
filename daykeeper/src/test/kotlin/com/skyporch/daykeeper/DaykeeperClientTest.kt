@@ -432,6 +432,33 @@ class DaykeeperClientTest {
     }
 
     @Test
+    fun messageBeforeCursorIsSentAsTheBeforeQueryParameter() = server { server ->
+        server.enqueue(response("""{"messages":[$message]}"""))
+        client(server).listOlderMessages(7, before = 10)
+        assertEquals(
+            "/gateway/v1/conversations/7/messages?before=10",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
+    fun messagePagesMustAdvancePastTheirCursor() = server { server ->
+        val sdk = client(server)
+        server.enqueue(response("""{"messages":[$message]}"""))
+        assertEquals("INVALID_RESPONSE", failure { sdk.listMessages(7, 10) }.code)
+        server.enqueue(response("""{"messages":[$message]}"""))
+        assertEquals("INVALID_RESPONSE", failure { sdk.listOlderMessages(7, 4) }.code)
+    }
+
+    @Test
+    fun messageListRejectsConflictingAndNonPositiveCursors() = server { server ->
+        val sdk = client(server)
+        assertEquals("INVALID_CONFIGURATION", failure { sdk.listMessages(7, 0) }.code)
+        assertEquals("INVALID_CONFIGURATION", failure { sdk.listOlderMessages(7, before = 0) }.code)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun forcedRefreshIdentityReadIgnoresANonRetryableExpiredTokenHint() = server { server ->
         val tokens = mutableListOf<Boolean>()
         val provider = DaykeeperTokenProvider { force ->

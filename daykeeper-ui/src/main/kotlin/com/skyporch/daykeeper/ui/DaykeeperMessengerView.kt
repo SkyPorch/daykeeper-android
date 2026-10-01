@@ -58,6 +58,7 @@ constructor(
     private val create =
         action(string(R.string.daykeeper_new_conversation)) { session?.createConversation() }
     private val seen = action(string(R.string.daykeeper_mark_read)) { session?.markRead() }
+    private val older = action(string(R.string.daykeeper_load_older)) { session?.loadOlderMessages() }
     private val recover =
         action(string(R.string.daykeeper_review_complete)) {
             if (session?.state?.value?.conversationId == null)
@@ -143,6 +144,7 @@ constructor(
             }
         )
         column.addView(status)
+        column.addView(older)
         // The whole messenger scrolls when large text/IME insets consume the viewport;
         // fixed composer/error chrome must not make history impossible to review.
         column.addView(
@@ -219,11 +221,16 @@ constructor(
                     string(R.string.daykeeper_status_usage_limit)
                 state.errorCode != null -> string(R.string.daykeeper_status_error)
                 state.busy -> string(R.string.daykeeper_status_busy)
+                state.historyAnnouncement == "no_older_messages" ->
+                    string(R.string.daykeeper_no_older_messages)
+                state.historyAnnouncement == "older_messages_loaded" ->
+                    string(R.string.daykeeper_older_messages_loaded)
                 else -> ""
             }
         back.visibility = if (thread) VISIBLE else GONE
         create.visibility = if (active && !thread) VISIBLE else GONE
         seen.visibility = if (thread) VISIBLE else GONE
+        older.visibility = if (thread && state.hasOlderMessages) VISIBLE else GONE
         composer.visibility = if (thread) VISIBLE else GONE
         send.visibility = if (thread) VISIBLE else GONE
         recover.visibility =
@@ -232,7 +239,7 @@ constructor(
         recover.text =
             if (thread) string(R.string.daykeeper_discard_draft)
             else string(R.string.daykeeper_reviewed_conversations)
-        listOf(back, refresh, logout, seen, recover).forEach {
+        listOf(back, refresh, logout, seen, older, recover).forEach {
             it.isEnabled = active && !state.busy
         }
         logout.isEnabled = active

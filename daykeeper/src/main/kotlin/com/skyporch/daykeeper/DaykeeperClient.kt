@@ -48,7 +48,7 @@ internal constructor(
     private val tokenProvider: DaykeeperTokenProvider,
     private val timeoutMillis: Long,
     allowPlainLoopback: Boolean,
-) : DaykeeperCustomerClient {
+) : DaykeeperCustomerClient, DaykeeperOlderMessagesClient {
     @JvmOverloads
     constructor(
         baseUrl: String,
@@ -141,13 +141,35 @@ internal constructor(
         }
     }
 
-    override suspend fun listMessages(conversationId: Long, after: Long?): DaykeeperMessageList {
+    override suspend fun listMessages(conversationId: Long, after: Long?): DaykeeperMessageList =
+        listMessagePage(conversationId, after, null)
+
+    override suspend fun listOlderMessages(
+        conversationId: Long,
+        before: Long,
+    ): DaykeeperMessageList = listMessagePage(conversationId, null, before)
+
+    private suspend fun listMessagePage(
+        conversationId: Long,
+        after: Long?,
+        before: Long?,
+    ): DaykeeperMessageList {
         positive(conversationId)
+        if (after != null && before != null) throw DaykeeperException("INVALID_CONFIGURATION")
         after?.let(::positive)
+        before?.let(::positive)
+        val cursor = after?.let { "?after=$it" } ?: before?.let { "?before=$it" }.orEmpty()
         return request<DaykeeperMessageList>(
-                "/v1/conversations/$conversationId/messages" + (after?.let { "?after=$it" } ?: "")
+                "/v1/conversations/$conversationId/messages$cursor"
             )
             .also { messages(it.messages, conversationId) }
+            .also {
+                val ids = it.messages.map(DaykeeperMessage::id)
+                response(
+                    ids == ids.sorted() &&
+                        ids.all { id -> (after == null || id > after) && (before == null || id < before) }
+                )
+            }
     }
 
     override suspend fun sendMessage(

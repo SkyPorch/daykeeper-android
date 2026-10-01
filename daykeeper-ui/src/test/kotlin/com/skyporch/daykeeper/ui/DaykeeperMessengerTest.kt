@@ -626,7 +626,7 @@ class DaykeeperMessengerTest {
         }
 
     @Test
-    fun refreshPagesFromTheLastMessageSoAnOversizedThreadStaysReadable() =
+    fun refreshRequestsOnlyMessagesNewerThanTheLastHeldMessage() =
         runTest(dispatcher) {
             val client = FakeClient()
             val session = DaykeeperMessengerSession(client)
@@ -638,8 +638,8 @@ class DaykeeperMessengerTest {
             session.refresh()
             advanceUntilIdle()
             assertEquals(listOf(1L), session.state.value.messages.map { it.id })
-            // The thread has grown past the transport ceiling: reading the whole
-            // conversation in one response would now fail outright.
+            // The conversation has more than one page, but refresh must request
+            // only newer messages rather than replace held history with a page.
             client.uncursoredHistoryFailure = responseError(500)
             client.messages.add(message(2))
             client.cursors.clear()
@@ -671,8 +671,8 @@ class DaykeeperMessengerTest {
             session.showConversations()
             advanceUntilIdle()
             assertTrue(session.state.value.messages.isEmpty())
-            // The thread is oversized now, so the uncursored read the old code issued on
-            // reopen would fail and leave the conversation unreadable.
+            // Reopening a thread we already hold must not replace it with only
+            // the latest page.
             client.uncursoredHistoryFailure = responseError(500)
             client.messages.add(message(2))
             client.cursors.clear()
@@ -687,6 +687,72 @@ class DaykeeperMessengerTest {
             )
             session.reset()
         }
+
+    @Test
+    fun loadOlderMessagesPagesBackUntilAnEmptyPage() = runTest(dispatcher) {
+        val client = FakeClient()
+        val session = DaykeeperMessengerSession(client)
+        session.resume()
+        advanceUntilIdle()
+        session.createConversation()
+        advanceUntilIdle()
+        client.messages.addAll((1L..45L).map(::message))
+
+        session.openConversation(1)
+        advanceUntilIdle()
+        assertEquals((26L..45L).toList(), session.state.value.messages.map { it.id })
+        assertTrue(session.state.value.hasOlderMessages)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals((6L..45L).toList(), session.state.value.messages.map { it.id })
+        assertTrue(session.state.value.hasOlderMessages)
+        assertEquals("older_messages_loaded", session.state.value.historyAnnouncement)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals((1L..45L).toList(), session.state.value.messages.map { it.id })
+        // A short non-empty page is not proof of exhaustion after defensive filtering.
+        assertTrue(session.state.value.hasOlderMessages)
+
+        session.loadOlderMessages()
+        advanceUntilIdle()
+        assertFalse(session.state.value.hasOlderMessages)
+        assertEquals("no_older_messages", session.state.value.historyAnnouncement)
+        assertEquals(listOf(null, 26L, 6L, 1L), client.beforeCursors)
+        session.reset()
+    }
+
+    @Test
+    fun sentMessageDoesNotLeapfrogAnUnreadAfterPage() = runTest(dispatcher) {
+        val client = FakeClient()
+        val session = DaykeeperMessengerSession(client)
+        session.resume()
+        advanceUntilIdle()
+        session.createConversation()
+        advanceUntilIdle()
+        client.messages.addAll((1L..50L).map(::message))
+
+        session.openConversation(1)
+        advanceUntilIdle()
+        assertEquals((31L..50L).toList(), session.state.value.messages.map { it.id })
+
+        client.messages.addAll((51L..80L).map(::message))
+        session.refresh()
+        advanceUntilIdle()
+        assertEquals((31L..70L).toList(), session.state.value.messages.map { it.id })
+
+        session.setDraft("A new message")
+        session.sendMessage()
+        advanceUntilIdle()
+        assertEquals(81L, session.state.value.messages.last().id)
+
+        session.refresh()
+        advanceUntilIdle()
+        assertEquals((31L..81L).toList(), session.state.value.messages.map { it.id })
+        assertEquals(listOf(null, 50L, 70L), client.cursors)
+        session.reset()
+    }
 
     // Obtain the SDK's real sanitized error through its public API; no internal-constructor bypass.
     private fun responseError(status: Int, code: String = "support_upstream_unavailable") =
@@ -746,7 +812,7 @@ class DaykeeperMessengerTest {
         override val lifecycle = LifecycleRegistry(this)
     }
 
-    private class FakeClient : DaykeeperCustomerClient {
+    private class FakeClient : DaykeeperCustomerClient, DaykeeperOlderMessagesClient {
         var sends = 0
         var creates = 0
         var seenWrites = 0
@@ -762,6 +828,7 @@ class DaykeeperMessengerTest {
         var uncursoredHistoryFailure: DaykeeperException? = null
         var identityReads = 0
         val cursors = mutableListOf<Long?>()
+        val beforeCursors = mutableListOf<Long?>()
         val threads = mutableListOf<DaykeeperConversation>()
         val messages = mutableListOf<DaykeeperMessage>()
 
@@ -818,12 +885,23 @@ class DaykeeperMessengerTest {
             after: Long?,
         ): DaykeeperMessageList {
             cursors.add(after)
+            beforeCursors.add(null)
             if (after == null) uncursoredHistoryFailure?.let { throw it }
-            return DaykeeperMessageList(
-                messages.filter {
-                    it.conversationId == conversationId && (after == null || it.id > after)
-                }
-            )
+            val matched = messages.filter {
+                it.conversationId == conversationId &&
+                    (after == null || it.id > after)
+            }
+            val page = if (after != null) matched.take(20) else matched.takeLast(20)
+            return DaykeeperMessageList(page)
+        }
+
+        override suspend fun listOlderMessages(
+            conversationId: Long,
+            before: Long,
+        ): DaykeeperMessageList {
+            beforeCursors.add(before)
+            val older = messages.filter { it.conversationId == conversationId && it.id < before }
+            return DaykeeperMessageList(older.takeLast(20))
         }
 
         override suspend fun sendMessage(
