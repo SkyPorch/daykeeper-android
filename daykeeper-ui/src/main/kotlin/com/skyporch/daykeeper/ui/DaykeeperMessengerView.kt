@@ -242,6 +242,8 @@ constructor(
         listOf(back, refresh, logout, seen, older, recover).forEach {
             it.isEnabled = active && !state.busy
         }
+        seen.isEnabled = active && !state.busy && state.messagesCaughtUp &&
+            (!state.uncertainMessage || state.recoveryReady)
         logout.isEnabled = active
         recover.isEnabled = active && !state.busy && state.recoveryReady
         create.isEnabled = active && !state.busy && !state.uncertainCreation

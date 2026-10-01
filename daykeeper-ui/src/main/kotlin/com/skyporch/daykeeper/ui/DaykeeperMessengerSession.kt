@@ -35,6 +35,8 @@ data class DaykeeperMessengerState(
     val hasOlderMessages: Boolean = false,
     /** Live-region announcement after an older-history action, or null otherwise. */
     val historyAnnouncement: String? = null,
+    /** The selected thread has completed its latest-page read or forward catch-up. */
+    val messagesCaughtUp: Boolean = false,
 )
 
 /**
@@ -65,6 +67,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     private val threadHasOlder = mutableMapOf<Long, Boolean>()
     /** Last server-fetched id, independent of local sends merged into the visible transcript. */
     private val threadFetchedThrough = mutableMapOf<Long, Long>()
+    private val threadCaughtUp = mutableSetOf<Long>()
     /**
      * Subject and identifier the customer token resolved to the first time this session read
      * identity. A later read naming anyone else means the host swapped customers underneath us.
@@ -93,7 +96,8 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         reviewedUncertain.clear()
         threadHistory.clear()
         threadHasOlder.clear()
-        threadFetchedThrough.clear()
+        threadFetchedThrough.keys.retainAll(uncertain)
+        threadCaughtUp.clear()
         creationReviewed = false
         mutableState.value = DaykeeperMessengerState(suspended = true)
     }
@@ -111,6 +115,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         threadHistory.clear()
         threadHasOlder.clear()
         threadFetchedThrough.clear()
+        threadCaughtUp.clear()
         identitySubject = null
         identityIdentifier = null
         markerRecoveryGeneration = null
@@ -147,6 +152,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
 
     fun refresh() = operate {
         selected?.let { id -> reviewedUncertain.remove(id) }
+        selected?.let { id -> threadCaughtUp.remove(id) }
         creationReviewed = false
         val summaries = it.listConversations().conversations
         currentCoroutineContext().ensureActive()
@@ -155,15 +161,65 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
         // send may be ahead of unread server history and must not leapfrog it.
         val cursor = selected?.let { threadFetchedThrough[it] }
         val messages = selected?.let { id ->
-            val page = it.listMessages(id, after = cursor).messages
+            var page = it.listMessages(id, after = cursor).messages
             currentCoroutineContext().ensureActive()
+            if (cursor != null && page.lastOrNull()?.id?.let { it <= cursor } == true) {
+                throw IllegalStateException("message cursor did not advance")
+            }
+            val recovered = page.toMutableList()
+            var fetched = page.lastOrNull()?.id ?: cursor
+            if (cursor == null && id in uncertain) {
+                val olderPages = mutableListOf<List<DaykeeperMessage>>()
+                var before = page.firstOrNull()?.id
+                if (before != null) {
+                    val olderClient = it as? DaykeeperOlderMessagesClient
+                        ?: throw IllegalStateException("older message history is unavailable")
+                    while (before != null) {
+                        val older = olderClient.listOlderMessages(id, before).messages
+                        currentCoroutineContext().ensureActive()
+                        if (older.isEmpty()) break
+                        val oldest = older.first().id
+                        if (oldest >= before) {
+                            throw IllegalStateException("older cursor did not advance")
+                        }
+                        olderPages.add(older)
+                        before = oldest
+                    }
+                }
+                recovered.clear()
+                olderPages.asReversed().forEach(recovered::addAll)
+                recovered.addAll(page)
+            }
+            if (cursor != null || id in uncertain && page.isNotEmpty()) {
+                // An uncertain send may be followed by more than one bounded API page. Keep
+                // recovery actions disabled until an empty page proves the transcript is current.
+                while (page.isNotEmpty()) {
+                    page = it.listMessages(id, after = fetched).messages
+                    currentCoroutineContext().ensureActive()
+                    if (page.isNotEmpty()) {
+                        val next = page.last().id
+                        if (fetched != null && next <= fetched) {
+                            throw IllegalStateException("message cursor did not advance")
+                        }
+                        recovered.addAll(page)
+                        fetched = next
+                    }
+                }
+            }
             if (cursor == null) {
-                threadHasOlder[id] = page.isNotEmpty() && it is DaykeeperOlderMessagesClient
+                threadHasOlder[id] = recovered.isNotEmpty() && it is DaykeeperOlderMessagesClient
             }
-            page.lastOrNull()?.id?.let { fetched ->
-                threadFetchedThrough[id] = maxOf(threadFetchedThrough[id] ?: 0L, fetched)
+            val lastFetched = recovered.lastOrNull()?.id
+            if (lastFetched != null) {
+                threadFetchedThrough[id] = maxOf(threadFetchedThrough[id] ?: 0L, lastFetched)
+            } else if (cursor == null) {
+                threadFetchedThrough.remove(id)
             }
-            merge(state.value.messages, page)
+            threadCaughtUp.add(id)
+            if (cursor == null && id in uncertain) {
+                threadHasOlder[id] = false
+            }
+            merge(state.value.messages, recovered)
         } ?: emptyList()
         currentCoroutineContext().ensureActive()
         selected?.takeIf { id -> id in uncertain }?.let { id -> reviewedUncertain.add(id) }
@@ -195,6 +251,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             selected = item.id
             threadHasOlder[item.id] = false
             threadFetchedThrough.remove(item.id)
+            threadCaughtUp.add(item.id)
             snapshot(
                 listOf(item) +
                     state.value.conversations.filterNot { existing -> existing.id == item.id }
@@ -211,6 +268,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             val message = it.sendMessage(id, content).message
             currentCoroutineContext().ensureActive()
             drafts.remove(id)
+            threadCaughtUp.remove(id)
             snapshot(
                 state.value.conversations,
                 (state.value.messages.filterNot { prior -> prior.id == message.id } + message)
@@ -222,6 +280,8 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
     fun markRead() {
         main()
         val id = selected ?: return
+        if (id !in threadCaughtUp) return
+        if (id in uncertain && id !in reviewedUncertain) return
         operate("seen") {
             it.markConversationSeen(id)
             currentCoroutineContext().ensureActive()
@@ -391,6 +451,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             selected?.let {
                 uncertain.add(it)
                 reviewedUncertain.remove(it)
+                threadCaughtUp.remove(it)
             }
     }
 
@@ -408,6 +469,7 @@ class DaykeeperMessengerSession(client: DaykeeperCustomerClient) {
             uncertainMessage = selected in uncertain,
             uncertainCreation = creationUncertain,
             recoveryReady = selected?.let { it in reviewedUncertain } ?: creationReviewed,
+            messagesCaughtUp = selected?.let { it in threadCaughtUp } == true,
         )
 
     private fun usable() = client != null && !state.value.suspended
