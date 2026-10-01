@@ -158,10 +158,15 @@ internal constructor(
         if (after != null && before != null) throw DaykeeperException("INVALID_CONFIGURATION")
         after?.let(::positive)
         before?.let(::positive)
-        val cursor = after?.let { "?after=$it" } ?: before?.let { "?before=$it" }.orEmpty()
+        val cursor = buildString {
+            append("?pagination=cursor")
+            after?.let { append("&after=$it") }
+            before?.let { append("&before=$it") }
+        }
         return request<DaykeeperMessageList>(
                 "/v1/conversations/$conversationId/messages$cursor"
             )
+            .also { response(it.pagination == "cursor") }
             .also { messages(it.messages, conversationId) }
             .also {
                 val ids = it.messages.map(DaykeeperMessage::id)

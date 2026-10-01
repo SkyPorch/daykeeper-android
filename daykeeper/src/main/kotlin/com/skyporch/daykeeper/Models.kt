@@ -113,7 +113,12 @@ data class DaykeeperSeenResult(
     val seenMessageId: Long? = null,
 )
 
-@Serializable data class DaykeeperMessageList(val messages: List<DaykeeperMessage>)
+@Serializable
+data class DaykeeperMessageList(
+    val messages: List<DaykeeperMessage>,
+    /** Present when the gateway honored an explicit cursor-pagination request. */
+    val pagination: String? = null,
+)
 
 @Serializable data class DaykeeperMessageResult(val message: DaykeeperMessage)
 

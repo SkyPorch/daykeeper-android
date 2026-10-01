@@ -67,6 +67,9 @@ your host's `ViewModel`. Create a `DaykeeperMessengerView(context)` and call
 `bind(session, viewLifecycleOwner)` in a Fragment, or bind to the Activity's
 lifecycle. Use only one bound view per session. See the runnable [example](example).
 
+Message reads opt into the gateway's marked cursor profile. A gateway that
+ignores the opt-in and returns the legacy envelope is rejected as an invalid
+response; deploy a compatible gateway before enabling this candidate.
 Opening a conversation loads the latest 20 customer-visible messages. The
 messenger's Load older messages control pages backward and stays available
 after a short non-empty page until a request returns no older messages.

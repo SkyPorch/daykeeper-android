@@ -50,7 +50,7 @@ jobs:
       - name: Install compile platform
         run: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Verify contract snapshot
-        run: echo '1072bb8df15e4f96bb9463f8bb77d9b5a7b0b97d762ee25599bee6f81dd55b51  openapi/customer.yaml' | sha256sum --check
+        run: echo '6a72fea574acd85dfb678b3b63c927bb3ea6506814baa6f0e774842947c64b83  openapi/customer.yaml' | sha256sum --check
       - name: Isolated runtime runner safety tests (no emulator)
         run: node --test Scripts/run-isolated-instrumentation.test.mjs
       - name: Tests, lint, R8 example, instrumentation compilation and local packaging
