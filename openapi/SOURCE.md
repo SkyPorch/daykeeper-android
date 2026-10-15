@@ -2,15 +2,19 @@
 
 The customer API snapshot is copied verbatim from
 [SkyPorch/daykeeper-openapi](https://github.com/SkyPorch/daykeeper-openapi)
-tag `v1.1.0`, commit `c9a0175d0053f1a2d57c9329f6d3a36ec6acdb71`, path
+tag `v1.11.0`, commit `4683bfa2eef41c0948a4ea1507ceb4c8e95f1bff`, path
 `openapi/customer.yaml`.
 
-SHA-256: `322158cd5fa5c54a054d701ff64a9c8b07cad477414d7df83ba5a3aa7ee06cc3`.
-Git blob: `bf566c97a541ac5e4e1f04670fb3b65475b635a6`.
-- Tag status: v1.1.0 (immutable release tag).
+SHA-256: `bc77cb02b877856d2b52ce948fcda4b3b357a7885cd5f5405c3b6394d3b96251`.
+Git blob: `dc1ac7a6d3191e28f296996729c9744c6b92efbb`.
+- Tag status: v1.11.0 (immutable release tag).
 The source's Apache-2.0 license is preserved in `openapi/LICENSE`.
 
-Change from the previous snapshot: `CustomerError` is now an open envelope
+Snapshot `v1.11.0` (customer contract 0.2.0) adds only the optional
+`Daykeeper-Client` request header on every customer-session operation, which
+this client already sends by default.
+
+Earlier snapshot change: `CustomerError` is now an open envelope
 (`additionalProperties: true`). The gateway may add fields to an error body, and
 `message`, `retryable` and `nextAction` are optional. The Kotlin decoder ignores
 unknown keys, so an added field must never be treated as a decode failure.

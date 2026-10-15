@@ -19,8 +19,9 @@
   precedence on the gateway. `BuildConfig.DAYKEEPER_VERSION` carries the Gradle
   `daykeeperVersion`.
 
-- Pin the customer API snapshot to the immutable OpenAPI `v1.1.0` release tag
-  and record its commit, Git blob and SHA-256 provenance.
+- Pin the customer API snapshot to the immutable OpenAPI `v1.11.0` release tag
+  (customer contract 0.2.0, which documents the `Daykeeper-Client` header) and
+  record its commit, Git blob and SHA-256 provenance.
 
 - Keep the draft and loaded history when a token expires mid-send. One recovery
   read decides what happened: a definite 401 or 403 leaves the draft editable and
