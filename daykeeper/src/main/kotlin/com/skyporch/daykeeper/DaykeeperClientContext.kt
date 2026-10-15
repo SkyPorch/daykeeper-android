@@ -28,7 +28,14 @@ internal object DaykeeperClientContext {
     private const val MAX_HEADER_LENGTH = 4096
 
     private val limits =
-        mapOf("appName" to 200, "sdkVersion" to 40, "locale" to 35, "timeZone" to 64)
+        mapOf(
+            "appName" to 200,
+            // A legal applicationId can exceed 100 characters; the gateway accepts 200.
+            "appId" to 200,
+            "sdkVersion" to 40,
+            "locale" to 35,
+            "timeZone" to 64,
+        )
 
     /**
      * The header value for [fields], or null when nothing is worth sending. Blank values and values
@@ -118,7 +125,10 @@ internal object DaykeeperApplicationContext {
  */
 internal class DaykeeperContextInitializer : Initializer<Unit> {
     override fun create(context: Context) {
-        DaykeeperApplicationContext.context = context.applicationContext ?: context
+        // Runs during host app startup: it must never be the reason the host fails to start.
+        try {
+            DaykeeperApplicationContext.context = context.applicationContext ?: context
+        } catch (_: Throwable) {}
     }
 
     override fun dependencies(): List<Class<out Initializer<*>>> = emptyList()

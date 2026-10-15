@@ -645,9 +645,13 @@ class DaykeeperClientTest {
         val sdk = client(server)
         sdk.getIdentity()
         sdk.createConversation()
-        val headers = List(2) { server.takeRequest().getHeader("Daykeeper-Client") }
+        val read = server.takeRequest()
+        val write = server.takeRequest()
+        assertEquals("GET", read.method)
+        assertEquals("POST", write.method)
+        val headers = listOf(read, write).map { it.getHeader("Daykeeper-Client") }
         assertNotNull(headers[0])
-        assertEquals("computed once and reused", headers[0], headers[1])
+        assertEquals("writes carry the same header", headers[0], headers[1])
         assertTrue(headers[0]!!.matches(Regex("^[A-Za-z0-9_-]+$")))
         val decoded =
             kotlinx.serialization.json.Json.parseToJsonElement(
@@ -673,5 +677,33 @@ class DaykeeperClientTest {
         val request = server.takeRequest()
         assertNull(request.getHeader("Daykeeper-Client"))
         assertEquals("Bearer synthetic-customer", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun theRefreshRetryAfterA401CarriesTheHeaderToo() = server { server ->
+        server.enqueue(response("""{"error":"token_expired"}""", 401))
+        server.enqueue(response(identity))
+        var calls = 0
+        client(server, provider = { refresh -> calls++; if (refresh) "new" else "old" })
+            .getIdentity()
+        val first = server.takeRequest()
+        val retry = server.takeRequest()
+        assertEquals(2, calls)
+        assertEquals("Bearer new", retry.getHeader("Authorization"))
+        assertNotNull(first.getHeader("Daykeeper-Client"))
+        assertEquals(first.getHeader("Daykeeper-Client"), retry.getHeader("Daykeeper-Client"))
+    }
+
+    @Test
+    fun concurrentFirstRequestsAllCarryTheSameHeader() = server { server ->
+        repeat(8) { server.enqueue(response(identity)) }
+        val sdk = client(server)
+        coroutineScope {
+            List(8) { async(kotlinx.coroutines.Dispatchers.IO) { sdk.getIdentity() } }
+                .forEach { it.await() }
+        }
+        val headers = List(8) { server.takeRequest().getHeader("Daykeeper-Client") }.toSet()
+        assertEquals(1, headers.size)
+        assertNotNull(headers.single())
     }
 }

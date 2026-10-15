@@ -15,6 +15,8 @@ android {
         minSdk = 23
         // Reported to the gateway in the Daykeeper-Client device context header.
         buildConfigField("String", "DAYKEEPER_VERSION", "\"${project.version}\"")
+        // Ships inside the AAR so every host's R8 keeps the startup initializer by name.
+        consumerProguardFiles("consumer-rules.pro")
     }
     buildFeatures { buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }

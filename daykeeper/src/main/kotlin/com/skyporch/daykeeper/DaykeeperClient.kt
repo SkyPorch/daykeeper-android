@@ -5,6 +5,7 @@ import java.io.IOException
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
@@ -55,7 +56,7 @@ internal constructor(
     private val timeoutMillis: Long,
     allowPlainLoopback: Boolean,
     context: Context? = null,
-    sendDeviceContext: Boolean = true,
+    private val sendDeviceContext: Boolean = true,
 ) : DaykeeperCustomerClient {
     @JvmOverloads
     constructor(
@@ -74,13 +75,29 @@ internal constructor(
             null
         }
 
-    // Computed once, on the first request's I/O worker, and never allowed to fail a request.
-    private val clientContextHeader: String? by lazy {
-        if (!sendDeviceContext) null
-        else
-            DaykeeperClientContext.header(
-                applicationContext ?: DaykeeperApplicationContext.context
+    /** The computed header, possibly null, once some request has computed it. */
+    private class ClientContextHeader(val value: String?)
+
+    private val clientContextCache = AtomicReference<ClientContextHeader?>(null)
+
+    /**
+     * Computed on a request's I/O worker without holding a lock, so concurrent first requests never
+     * wait on each other's PackageManager calls. A race computes the same value twice at worst; the
+     * first one published is kept. Never throws.
+     */
+    private fun clientContextHeader(): String? {
+        if (!sendDeviceContext) return null
+        clientContextCache.get()?.let {
+            return it.value
+        }
+        val computed =
+            ClientContextHeader(
+                DaykeeperClientContext.header(
+                    applicationContext ?: DaykeeperApplicationContext.context
+                )
             )
+        clientContextCache.compareAndSet(null, computed)
+        return clientContextCache.get()?.value
     }
 
     private val base: String
@@ -243,6 +260,8 @@ internal constructor(
         // killed.
         val workerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val worker = workerScope.async {
+            val clientContext = clientContextHeader()
+            currentCoroutineContext().ensureActive()
             // A forced-refresh read already carries a new credential, so it gets one
             // attempt like a write rather than a refresh-and-retry pair.
             repeat(if (write || forceRefresh) 1 else 2) { attempt ->
@@ -267,7 +286,7 @@ internal constructor(
                         .header("Authorization", "Bearer $token")
                         .header("Accept", "application/json")
                         .header("Cache-Control", "no-cache, no-store")
-                clientContextHeader?.let { builder.header(DaykeeperClientContext.HEADER, it) }
+                clientContext?.let { builder.header(DaykeeperClientContext.HEADER, it) }
                 if (write)
                     builder.post(
                         object : RequestBody() {
