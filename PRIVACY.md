@@ -10,8 +10,22 @@ actual backend configuration before shipping.
 No SDK analytics, ad identifier, contact-list access, location permission, push
 token collection, persistent transcript storage or background job is installed.
 The library declares INTERNET permission. Its HTTP dependency uses AndroidX
-Startup; review the merged host manifest and all transitive dependencies. The
-host controls network security policy and OS backup settings.
+Startup, and the SDK registers one initializer under that same
+`InitializationProvider` that only keeps the application context; review the
+merged host manifest and all transitive dependencies. The host controls network
+security policy and OS backup settings.
+
+Every gateway request also carries device context in a `Daykeeper-Client`
+header, which the backend stores on the customer's support contact: SDK name and
+version, Android version, device brand and model (for example `samsung`,
+`SM-S921B`), the host app's name, package name, version name and version code,
+the device locale and the time zone ID. None of it needs a permission. The SDK
+never sends ANDROID_ID, the advertising ID, IMEI, serial number, the
+user-assigned device name or location. Values signed into the customer token by
+your backend take precedence. Declare this device and app information in the
+Data safety form alongside the support content, or pass
+`sendDeviceContext = false` to the `DaykeeperClient(baseUrl, tokenProvider,
+timeoutMillis, context, sendDeviceContext)` constructor to send none of it.
 
 The messenger disables view-state saving for content, platform autofill and
 content capture where supported, and requests no personalized IME learning.

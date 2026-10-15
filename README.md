@@ -60,6 +60,48 @@ can have `DaykeeperException.outcomeUnknown == true` after a transport failure,
 timeout or invalid success response: read the latest server state before deciding
 what to do next. This is not an exactly-once delivery guarantee.
 
+## Device context
+
+Like other support SDKs, every request carries a `Daykeeper-Client` header so
+support agents see the device on the contact with no host code. It is
+base64url (no padding) of a small JSON object with only these fields, each
+omitted when the platform cannot answer:
+
+- SDK name and version, `platform` and OS name (`android`, `Android`)
+- OS version (`Build.VERSION.RELEASE`), device brand and model (`Build.BRAND`,
+  `Build.MODEL`)
+- Host app name, package name, version name and version code
+- Locale (`Locale.getDefault()`) and time zone ID (`TimeZone.getDefault()`)
+
+It never includes ANDROID_ID, the advertising ID, IMEI, serial number, the
+user-assigned device name, location, or anything that needs a permission. Values
+are computed once per client, blank or over-long values are dropped rather than
+truncated, and a failed read only omits that field; it never fails a request.
+
+The host app fields need an application context. The SDK picks it up at process
+start through an androidx.startup initializer registered under the
+`InitializationProvider` that OkHttp already merges into your manifest, so no
+extra ContentProvider is added. If your app removes that provider or the
+`com.skyporch.daykeeper.DaykeeperContextInitializer` entry, pass a context
+yourself; only `context.applicationContext` is retained:
+
+```kotlin
+DaykeeperClient(baseUrl, tokenProvider, 30_000, applicationContext)
+```
+
+To send no device context at all, use the same constructor with
+`sendDeviceContext = false` (the context may be `null`):
+
+```kotlin
+DaykeeperClient(baseUrl, tokenProvider, 30_000, null, sendDeviceContext = false)
+```
+
+The timeout is required on this constructor so it never overlaps the original
+`DaykeeperClient(baseUrl, tokenProvider, timeoutMillis = 30_000)`. The header
+is presentation context, never authorization: a value your backend signs into
+the customer token (app version, platform, device and so on) takes precedence on
+the gateway, field by field.
+
 ## Native messenger
 
 Create a `DaykeeperMessengerSession(client)` on the main thread and retain it in
@@ -117,7 +159,8 @@ The total request deadline includes token acquisition and response reading
 the SDK cannot forcibly terminate a blocking host implementation.
 
 The SDK has no analytics, push registration, background jobs or transcript
-persistence. Models contain customer data: do not log them. See [security](SECURITY.md)
+persistence. It does describe the device on each request; see
+[device context](#device-context). Models contain customer data: do not log them. See [security](SECURITY.md)
 and [privacy integration](PRIVACY.md) before shipping. Screenshots, host analytics,
 keyboards, OS backups and your backend remain the host app's responsibility.
 

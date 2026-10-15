@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- Describe the device on every request in a `Daykeeper-Client` header
+  (base64url JSON, no padding): SDK name and version, OS version, device brand
+  and model, host app name, package, version name and version code, locale and
+  time zone, so support agents see them on the contact with no host code. Never
+  ANDROID_ID, advertising ID, IMEI, serial, device name or location. The host
+  app is found through an androidx.startup initializer that joins the
+  `InitializationProvider` OkHttp already merges. A new `DaykeeperClient`
+  constructor `(baseUrl, tokenProvider, timeoutMillis, context,
+  sendDeviceContext = true)` takes an explicit context or opts out; the 0.1.0
+  `(baseUrl, tokenProvider, timeoutMillis = 30_000)` constructor is unchanged,
+  including its Kotlin default-argument stub, so apps compiled against 0.1.0
+  keep linking. Signed token claims still take
+  precedence on the gateway. `BuildConfig.DAYKEEPER_VERSION` carries the Gradle
+  `daykeeperVersion`.
+
 - Pin the customer API snapshot to the immutable OpenAPI `v1.1.0` release tag
   and record its commit, Git blob and SHA-256 provenance.
 

@@ -1,3 +1,21 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!--
+          Joins the androidx.startup InitializationProvider that OkHttp already merges into the
+          host manifest, rather than adding a ContentProvider of its own. The initializer only
+          keeps the application context so device context can name the host app.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="com.skyporch.daykeeper.DaykeeperContextInitializer"
+                android:value="androidx.startup" />
+        </provider>
+    </application>
 </manifest>
