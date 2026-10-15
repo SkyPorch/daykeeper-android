@@ -1,5 +1,6 @@
 package com.skyporch.daykeeper
 
+import android.content.Context
 import java.io.IOException
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -41,6 +42,11 @@ import okio.BufferedSink
 /**
  * Customer-only, coroutine SDK. No cookies, redirects, persistent cache or implicit write replay.
  * Token providers must be cooperative and must never switch customer identity within this client.
+ *
+ * Every request carries a `Daykeeper-Client` header describing the SDK, OS, device model and host
+ * app so support agents see it on the contact. The host app is found through the application
+ * context captured at process start; pass [context] only if androidx.startup is disabled in your
+ * manifest. Set [sendDeviceContext] to false to send no device context at all.
  */
 class DaykeeperClient
 internal constructor(
@@ -48,13 +54,34 @@ internal constructor(
     private val tokenProvider: DaykeeperTokenProvider,
     private val timeoutMillis: Long,
     allowPlainLoopback: Boolean,
+    context: Context? = null,
+    sendDeviceContext: Boolean = true,
 ) : DaykeeperCustomerClient {
     @JvmOverloads
     constructor(
         baseUrl: String,
         tokenProvider: DaykeeperTokenProvider,
         timeoutMillis: Long = 30_000,
-    ) : this(baseUrl, tokenProvider, timeoutMillis, BuildConfig.DEBUG)
+        context: Context? = null,
+        sendDeviceContext: Boolean = true,
+    ) : this(baseUrl, tokenProvider, timeoutMillis, BuildConfig.DEBUG, context, sendDeviceContext)
+
+    // Only the application context is retained, so passing an Activity cannot leak it.
+    private val applicationContext: Context? =
+        try {
+            context?.applicationContext
+        } catch (_: Exception) {
+            null
+        }
+
+    // Computed once, on the first request's I/O worker, and never allowed to fail a request.
+    private val clientContextHeader: String? by lazy {
+        if (!sendDeviceContext) null
+        else
+            DaykeeperClientContext.header(
+                applicationContext ?: DaykeeperApplicationContext.context
+            )
+    }
 
     private val base: String
     private val json = Json { ignoreUnknownKeys = true }
@@ -240,6 +267,7 @@ internal constructor(
                         .header("Authorization", "Bearer $token")
                         .header("Accept", "application/json")
                         .header("Cache-Control", "no-cache, no-store")
+                clientContextHeader?.let { builder.header(DaykeeperClientContext.HEADER, it) }
                 if (write)
                     builder.post(
                         object : RequestBody() {

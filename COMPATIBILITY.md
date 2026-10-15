@@ -34,7 +34,8 @@ Dependency currency is not a completed security audit.
   control, single-shot writes, errors, cancellation, gzip limits and deadlines.
   TLS rejection uses an untrusted local certificate. These run on a JVM, not ART.
 - Robolectric tests exercise Android Views and session/lifecycle behavior at
-  simulated API 35. They are not device screenshots or emulator runtime proof.
+  simulated API 35, and device-context collection at simulated API 23, 28, 33
+  and 35. They are not device screenshots or emulator runtime proof.
 - The example is also built with R8 shrinking. A successful build does not prove
   the minified app's runtime behavior.
 - Instrumented UI tests are supplied for a real Android runtime. Until an

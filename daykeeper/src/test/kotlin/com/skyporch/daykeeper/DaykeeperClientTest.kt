@@ -637,4 +637,41 @@ class DaykeeperClientTest {
         server.enqueue(response("""{"error":"not_found"}""", 404))
         assertNull(failure { sdk.getUnread() }.nextAction)
     }
+
+    @Test
+    fun everyRequestDescribesTheDeviceInOneUrlSafeHeader() = server { server ->
+        server.enqueue(response(identity))
+        server.enqueue(response("""{"conversation":$conversation}"""))
+        val sdk = client(server)
+        sdk.getIdentity()
+        sdk.createConversation()
+        val headers = List(2) { server.takeRequest().getHeader("Daykeeper-Client") }
+        assertNotNull(headers[0])
+        assertEquals("computed once and reused", headers[0], headers[1])
+        assertTrue(headers[0]!!.matches(Regex("^[A-Za-z0-9_-]+$")))
+        val decoded =
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                    String(java.util.Base64.getUrlDecoder().decode(headers[0]), Charsets.UTF_8)
+                )
+                as kotlinx.serialization.json.JsonObject
+        assertEquals(
+            BuildConfig.DAYKEEPER_VERSION,
+            (decoded["sdkVersion"] as kotlinx.serialization.json.JsonPrimitive).content,
+        )
+        assertEquals("\"android\"", decoded["sdk"].toString())
+    }
+
+    @Test
+    fun deviceContextOptOutSendsNoHeader() = server { server ->
+        server.enqueue(response(identity))
+        DaykeeperClient(
+                server.url("/gateway/").toString(),
+                { "synthetic-customer" },
+                sendDeviceContext = false,
+            )
+            .getIdentity()
+        val request = server.takeRequest()
+        assertNull(request.getHeader("Daykeeper-Client"))
+        assertEquals("Bearer synthetic-customer", request.getHeader("Authorization"))
+    }
 }
