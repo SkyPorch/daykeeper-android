@@ -10,9 +10,12 @@
   time zone, so support agents see them on the contact with no host code. Never
   ANDROID_ID, advertising ID, IMEI, serial, device name or location. The host
   app is found through an androidx.startup initializer that joins the
-  `InitializationProvider` OkHttp already merges; `DaykeeperClient` gains
-  optional `context` and `sendDeviceContext = true` parameters (source and
-  binary compatible through `@JvmOverloads`). Signed token claims still take
+  `InitializationProvider` OkHttp already merges. A new `DaykeeperClient`
+  constructor `(baseUrl, tokenProvider, timeoutMillis, context,
+  sendDeviceContext = true)` takes an explicit context or opts out; the 0.1.0
+  `(baseUrl, tokenProvider, timeoutMillis = 30_000)` constructor is unchanged,
+  including its Kotlin default-argument stub, so apps compiled against 0.1.0
+  keep linking. Signed token claims still take
   precedence on the gateway. `BuildConfig.DAYKEEPER_VERSION` carries the Gradle
   `daykeeperVersion`.
 

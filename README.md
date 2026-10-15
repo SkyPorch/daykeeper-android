@@ -86,10 +86,18 @@ extra ContentProvider is added. If your app removes that provider or the
 yourself; only `context.applicationContext` is retained:
 
 ```kotlin
-DaykeeperClient(baseUrl, tokenProvider, context = applicationContext)
+DaykeeperClient(baseUrl, tokenProvider, 30_000, applicationContext)
 ```
 
-To send no device context at all, pass `sendDeviceContext = false`. The header
+To send no device context at all, use the same constructor with
+`sendDeviceContext = false` (the context may be `null`):
+
+```kotlin
+DaykeeperClient(baseUrl, tokenProvider, 30_000, null, sendDeviceContext = false)
+```
+
+The timeout is required on this constructor so it never overlaps the original
+`DaykeeperClient(baseUrl, tokenProvider, timeoutMillis = 30_000)`. The header
 is presentation context, never authorization: a value your backend signs into
 the customer token (app version, platform, device and so on) takes precedence on
 the gateway, field by field.

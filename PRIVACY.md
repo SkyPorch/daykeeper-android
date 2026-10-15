@@ -24,7 +24,8 @@ never sends ANDROID_ID, the advertising ID, IMEI, serial number, the
 user-assigned device name or location. Values signed into the customer token by
 your backend take precedence. Declare this device and app information in the
 Data safety form alongside the support content, or pass
-`sendDeviceContext = false` to `DaykeeperClient` to send none of it.
+`sendDeviceContext = false` to the `DaykeeperClient(baseUrl, tokenProvider,
+timeoutMillis, context, sendDeviceContext)` constructor to send none of it.
 
 The messenger disables view-state saving for content, platform autofill and
 content capture where supported, and requests no personalized IME learning.

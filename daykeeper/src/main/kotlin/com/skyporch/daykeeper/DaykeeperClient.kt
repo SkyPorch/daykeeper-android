@@ -58,12 +58,29 @@ internal constructor(
     context: Context? = null,
     private val sendDeviceContext: Boolean = true,
 ) : DaykeeperCustomerClient {
+    // Binary compatibility: this exact signature, default included, is the 0.1.0 constructor.
+    // Kotlin callers that omitted timeoutMillis compiled against its synthetic default stub
+    // (String, DaykeeperTokenProvider, long, int, DefaultConstructorMarker), so it must not grow
+    // parameters. DaykeeperClientAbiTest pins it.
     @JvmOverloads
     constructor(
         baseUrl: String,
         tokenProvider: DaykeeperTokenProvider,
         timeoutMillis: Long = 30_000,
-        context: Context? = null,
+    ) : this(baseUrl, tokenProvider, timeoutMillis, BuildConfig.DEBUG)
+
+    /**
+     * Pass [context] only if your app disables androidx.startup (the application context is
+     * otherwise picked up at process start); only `context.applicationContext` is retained. Set
+     * [sendDeviceContext] to false to send no device context. [timeoutMillis] is required here so
+     * this overload never overlaps the 0.1.0 constructor.
+     */
+    @JvmOverloads
+    constructor(
+        baseUrl: String,
+        tokenProvider: DaykeeperTokenProvider,
+        timeoutMillis: Long,
+        context: Context?,
         sendDeviceContext: Boolean = true,
     ) : this(baseUrl, tokenProvider, timeoutMillis, BuildConfig.DEBUG, context, sendDeviceContext)
 

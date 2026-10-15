@@ -671,6 +671,8 @@ class DaykeeperClientTest {
         DaykeeperClient(
                 server.url("/gateway/").toString(),
                 { "synthetic-customer" },
+                30_000,
+                null,
                 sendDeviceContext = false,
             )
             .getIdentity()
